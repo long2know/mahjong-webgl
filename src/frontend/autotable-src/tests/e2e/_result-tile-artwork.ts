@@ -6,56 +6,66 @@ import type { HandResultEntry } from '../../src/types';
 export async function assertResultTileArtwork(page: Page, hand: readonly number[], names?: readonly string[]): Promise<void> {
   const tiles = page.locator('#result-hand .result-tile');
   await expect(tiles).toHaveCount(hand.length);
-  await expect(page.locator('#result-hand button, #result-hand a, #result-hand [tabindex]')).toHaveCount(0);
+  await expect(page.locator('#result-hand button, #result-hand a, #result-hand .result-tile[tabindex]')).toHaveCount(0);
   if (hand.length === 0) return;
   await expect(page.locator('#result-hand')).toBeVisible();
   await page.locator('#result-hand').scrollIntoViewIfNeeded({ timeout: 5_000 });
+  await expect.poll(() => tiles.evaluateAll(elements => elements.every(element =>
+    (element as HTMLElement).dataset.art === 'ready'))).toBe(true);
+  const grouped = await page.locator('#result-hand').getAttribute('data-grouped') === 'true';
   const rendered = await tiles.evaluateAll(elements => elements.map(element => {
     const tile = element as HTMLElement;
-    const style = getComputedStyle(tile);
+    const image = tile.querySelector('img') as HTMLImageElement | null;
+    const row = tile.closest('.result-tile-group-tiles') as HTMLElement | null;
     const rect = tile.getBoundingClientRect();
     return {
       tileId: tile.dataset.tileId, face: tile.dataset.face, role: tile.getAttribute('role'),
       label: tile.getAttribute('aria-label'), title: tile.title, text: tile.textContent,
-      image: style.backgroundImage, size: style.backgroundSize,
-      x: parseFloat(style.backgroundPositionX), y: parseFloat(style.backgroundPositionY),
+      image: image?.src, complete: image?.complete, naturalWidth: image?.naturalWidth, naturalHeight: image?.naturalHeight,
+      x: image?.style.left, y: image?.style.top, winning: tile.dataset.winning,
+      scrollable: row !== null && row.scrollWidth > row.clientWidth, keyboardScroll: row?.tabIndex === 0,
       width: rect.width, height: rect.height,
       painted: [rect.left + 8, (rect.left + rect.right) / 2, rect.right - 8].every(x =>
         [rect.top + 8, (rect.top + rect.bottom) / 2, rect.bottom - 8].every(y =>
           tile.contains(document.elementFromPoint(x, y)))),
     };
   }));
+  expect(rendered.map(tile => Number(tile.tileId)).sort((a, b) => a - b)).toEqual([...hand].sort((a, b) => a - b));
   for (let i = 0; i < hand.length; i++) {
-    const face = Math.floor(hand[i] / 4);
-    const expectedName = names?.[i] ?? `${face % 9 + 1} ${['characters', 'circles', 'bamboo'][Math.floor(face / 9)]}`;
     const tile = rendered[i];
-    expect(tile.tileId).toBe(String(hand[i]));
+    const id = grouped ? Number(tile.tileId) : hand[i], face = Math.floor(id / 4);
+    const expectedName = names?.[grouped ? hand.indexOf(id) : i] ?? `${face % 9 + 1} ${['characters', 'circles', 'bamboo'][Math.floor(face / 9)]}`;
+    expect(tile.tileId).toBe(String(id));
     expect(tile.face).toBe(String(face));
     expect(tile.role).toBe('img');
-    expect(tile.label).toBe(expectedName);
+    if (tile.winning === 'true') expect(tile.label).toContain(expectedName);
+    else expect(tile.label).toBe(expectedName);
     expect(tile.title).toBe(expectedName);
-    expect(tile.text).toBe('');
-    expect(tile.size).toBe('800% 640%');
-    expect(tile.x / 100 * 448).toBeCloseTo(face % 8 * 64, 2);
-    expect(tile.y / 100 * 432).toBeCloseTo(Math.floor(face / 8) * 80, 2);
-    expect(tile.width).toBeGreaterThanOrEqual(40);
-    expect(tile.height).toBeCloseTo(tile.width * 5 / 4, 1);
-    expect(tile.painted, `physical tile ${hand[i]} must not be clipped or covered`).toBe(true);
+    expect(tile.text).toBe(expectedName);
+    expect(tile.complete).toBe(true);
+    expect(tile.naturalWidth).toBe(1536); expect(tile.naturalHeight).toBe(1536);
+    expect(parseFloat(tile.x!)).toBeCloseTo(-(face % 8) * 100, 2);
+    expect(parseFloat(tile.y!)).toBeCloseTo(-(1536 / 288 - Math.floor(face / 8) - 1) * 100, 2);
+    expect(tile.width).toBeGreaterThanOrEqual(36);
+    expect(tile.height).toBeCloseTo(tile.width * 1.5, 1);
+    if (tile.scrollable) expect(tile.keyboardScroll, 'wide special groups must remain keyboard-scrollable').toBe(true);
+    else expect(tile.painted, `physical tile ${hand[i]} must not be clipped or covered`).toBe(true);
   }
   const images = [...new Set(rendered.map(tile => tile.image))];
   expect(images).toHaveLength(1);
-  const imageUrl = /^url\(["']?(.+?)["']?\)$/.exec(images[0])?.[1];
-  expect(imageUrl, 'the result must use the board tile atlas, not just a colored rectangle').toMatch(/tiles-labels\.auto\.[a-f0-9]+\.png$/);
+  const imageUrl = images[0]!;
+  expect(imageUrl, 'the result must use the retained licensed board tile atlas').toMatch(/Faces(?:Labelled)?\.[a-f0-9]+\.png$/);
   const decoded = await page.evaluate(async url => {
     const image = new Image();
     image.src = url;
     await image.decode();
     return { width: image.naturalWidth, height: image.naturalHeight, complete: image.complete };
   }, imageUrl!);
-  expect(decoded).toEqual({ width: 512, height: 512, complete: true });
+  expect(decoded).toEqual({ width: 1536, height: 1536, complete: true });
   const response = await page.request.get(imageUrl!);
   expect(response.ok()).toBe(true);
-  expect(await response.body()).toEqual(readFileSync(resolve(__dirname, '../../img/tiles-labels.auto.png')));
+  expect(await response.body()).toEqual(readFileSync(resolve(__dirname,
+    imageUrl.includes('FacesLabelled.') ? '../../art/tiles/FacesLabelled.png' : '../../art/tiles/Faces.png')));
 }
 
 export async function captureResultTileArtwork(

@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { runInNewContext } from 'node:vm';
-import { actualRoomReady } from './browser-ux.mjs';
+import { actualRoomReady, fixtureTarget } from './browser-ux.mjs';
 import { gameHarness, plain } from '../../src/frontend/autotable-src/tests/node/renderer-test-support.mjs';
 
 function fixture(t) {
@@ -20,6 +20,11 @@ function fixture(t) {
 }
 
 test('real room wait safely polls absent bootstrap and old frames during navigation', t => {
+  assert.equal(fixtureTarget('http://127.0.0.1:5099').origin, 'http://127.0.0.1:5099');
+  for (const unsafe of ['http://127.0.0.1:5086', 'http://127.0.0.1:5100', 'http://localhost:5099',
+    'https://127.0.0.1:5099', 'http://127.0.0.1:5099/?gameId=existing']) {
+    assert.throws(() => fixtureTarget(unsafe), assert.AssertionError);
+  }
   const h = fixture(t);
   h.window.game = undefined;
   assert.equal(h.ready(), false, 'a page replacement must be polled, not throw before window.game exists');

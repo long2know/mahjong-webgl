@@ -20,7 +20,7 @@ public sealed class ChangshaRuntimeOptions
     public int BotPickupDelayMs { get; set; } = 500;
 
     /// <summary>Total claim-window timeout. Clients see this as a countdown hint.</summary>
-    public int ClaimWindowTimeoutMs { get; set; } = 5000;
+    public int ClaimWindowTimeoutMs { get; set; } = 8000;
 
     /// <summary>Delay between TilesDealt batch events to allow client animations.</summary>
     public int DealBatchDelayMs { get; set; } = 0;

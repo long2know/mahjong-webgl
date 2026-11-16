@@ -250,7 +250,11 @@ class Element extends EventTarget {
   removeAttribute(name) { this.attributes.delete(name); }
   append(...children) { for (const child of children) { this.children.push(child); child.parent = this; } }
   remove() { if (this.parent) this.parent.children = this.parent.children.filter(child => child !== this); }
-  getBoundingClientRect() { return { left: 0, top: 0, right: 390, bottom: 844, width: 390, height: 844 }; }
+  get width() { return this.backingWidth ?? 300; }
+  set width(value) { this.backingWidth = value; this.widthWrites = (this.widthWrites ?? 0) + 1; }
+  get height() { return this.backingHeight ?? 150; }
+  set height(value) { this.backingHeight = value; this.heightWrites = (this.heightWrites ?? 0) + 1; }
+  getBoundingClientRect() { return this.rect ?? { left: 0, top: 0, right: 390, bottom: 844, width: 390, height: 844 }; }
 }
 function hostFixture() {
   const document = Object.assign(new EventTarget(), {
@@ -289,7 +293,8 @@ function hostFixture() {
     cancelAnimationFrame: id => jobs.delete(id),
   }, { 'renderer/webgl-scene.ts': { WebglScene: { create: async () => scene } } }).load('renderer/webgl-host.ts');
   const main = new Element(); document.body.append(main);
-  const host = new WebglHost(main, { action() {}, resized() {}, resumed() {}, failure() { failures++; }, notice() {} });
+  const lifecycle = { resume: () => {} };
+  const host = new WebglHost(main, { action() {}, resized() {}, resumed() { lifecycle.resume(); }, failure() { failures++; }, notice() {} });
   window.addEventListener('mahjong:renderer-frame', event => receipts.push(plain(event.detail)));
   host.clear('session', 'join');
   const layout = { contractVersion: '1.0.0', instanceId: host.instanceId, sessionId: 'session', type: 'layout',
@@ -304,7 +309,11 @@ function hostFixture() {
     now += milliseconds;
     const callbacks = [...jobs.values()]; jobs.clear(); callbacks.forEach(callback => callback(now));
   };
-  return { host, layout, frame, tick, window, document, scene, draws, receipts, jobs, presentationResets, reconciled,
+  const resize = (width, height) => {
+    main.rect = { left: 0, top: 0, right: width, bottom: height, width, height };
+    window.innerHeight = height; window.dispatchEvent(new Event('resize'));
+  };
+  return { host, layout, frame, tick, window, document, scene, draws, receipts, jobs, presentationResets, reconciled, resize, lifecycle,
     finish: () => { canFinish = true; }, disposed: () => disposed, failures: () => failures };
 }
 
@@ -392,6 +401,58 @@ test('unfocused publication stays bounded, resumes newest frame and disposal sto
   assert.equal(f.disposed(), 1);
   assert.equal(f.jobs.size, 0);
   assert.equal(f.document.body.getAttribute('data-webgl-renderer-ready'), null);
+});
+
+test('a paused resize retains backing pixels until the replacement frame is drawn, and unchanged geometry is never reset', async t => {
+  const f = hostFixture(); t.after(() => f.host.dispose()); f.finish(); await f.host.mount();
+  f.host.publish(f.layout, f.frame(1)); f.tick(); f.tick();
+  const writes = [f.host.canvas.widthWrites, f.host.canvas.heightWrites];
+  f.document.focused = false; f.window.dispatchEvent(new Event('blur'));
+  f.resize(780, 520); f.host.publish(f.layout, f.frame(2)); f.tick();
+  assert.equal(f.host.viewport.widthPx, 780);
+  assert.equal(f.host.canvas.width, 390); assert.equal(f.host.canvas.height, 844);
+  assert.deepEqual([f.host.canvas.widthWrites, f.host.canvas.heightWrites], writes);
+  assert.equal(f.jobs.size, 0);
+  f.document.focused = true; f.window.dispatchEvent(new Event('focus'));
+  assert.equal(f.host.canvas.width, 390, 'even resume waits for a coherent replacement publication');
+  f.tick(); f.tick();
+  assert.equal(f.host.canvas.width, 780); assert.equal(f.host.canvas.height, 520);
+  const resized = [f.host.canvas.widthWrites, f.host.canvas.heightWrites];
+  f.host.measure(true); f.host.publish(f.layout, f.frame(3)); f.tick(); f.tick();
+  assert.deepEqual([f.host.canvas.widthWrites, f.host.canvas.heightWrites], resized,
+    'inset-only/forced measurements must not erase a valid same-sized drawing buffer');
+});
+
+test('visible-but-unfocused resume repaints one latest fenced frame without unlocking input or draining subsequent updates', async t => {
+  const f = hostFixture(); t.after(() => f.host.dispose()); f.finish(); await f.host.mount();
+  f.host.publish(f.layout, f.frame(1)); f.tick(); f.tick();
+  f.document.focused = false; f.window.dispatchEvent(new Event('blur'));
+  f.document.hidden = true; f.document.dispatchEvent(new Event('visibilitychange'));
+  f.resize(780, 520); f.host.publish(f.layout, f.frame(2)); f.host.publish(f.layout, f.frame(3));
+  f.lifecycle.resume = () => f.host.publish(f.layout, f.frame(4));
+  f.document.hidden = false; f.document.dispatchEvent(new Event('visibilitychange')); f.tick();
+  assert.deepEqual(f.draws, [1, 4], 'visibility is a repaint signal even when the aggregate suspension flag stays true');
+  f.host.publish(f.layout, f.frame(5)); f.host.publish(f.layout, f.frame(6)); f.tick();
+  assert.equal(f.receipts.at(-1).receipt.frameId, 4);
+  assert.equal(f.host.actionFrame(), null);
+  assert.equal(f.host.queue.frame.frameId, 6);
+  assert.equal(f.jobs.size, 0);
+  f.lifecycle.resume = () => f.host.publish(f.layout, f.frame(7));
+  f.document.focused = true; f.window.dispatchEvent(new Event('focus')); f.tick(); f.tick();
+  assert.deepEqual(f.draws, [1, 4, 7]); assert.equal(f.receipts.at(-1).receipt.frameId, 7);
+});
+
+test('authority clear cancels a paused visibility repaint and cannot replay its old frame or input', async t => {
+  const f = hostFixture(); t.after(() => f.host.dispose()); f.finish(); await f.host.mount();
+  f.host.publish(f.layout, f.frame(1)); f.tick(); f.tick();
+  f.document.focused = false; f.window.dispatchEvent(new Event('blur'));
+  f.document.hidden = true; f.document.dispatchEvent(new Event('visibilitychange'));
+  f.host.publish(f.layout, f.frame(2));
+  f.document.hidden = false; f.document.dispatchEvent(new Event('visibilitychange'));
+  f.host.clear('revoked', 'authority-change'); f.tick();
+  assert.equal(f.scene.committed, null); assert.equal(f.host.queue, null); assert.equal(f.host.inFlight, null);
+  assert.equal(f.host.actionFrame(), null); assert.equal(f.jobs.size, 0);
+  assert.deepEqual(f.draws, [1]);
 });
 
 test('stale sessions/publications and context loss revoke input without selecting Unity or acknowledging success', async t => {

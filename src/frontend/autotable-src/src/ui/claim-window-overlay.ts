@@ -33,6 +33,9 @@ import './claim-window-overlay.css';
 import type { Client } from '../client';
 import type { ClaimWindowEntry } from '../types';
 import { getRuleActionControls, type RuleActionControls } from './rule-action-controls';
+import { onLanguageChange, t } from '../i18n';
+import { createPhysicalTileFace } from './tile-face';
+import { claimPreview, createClaimPreview } from './claim-preview';
 
 // #137 — keys the always-on game view/navigation handler (game.ts onKeyDown)
 // owns. The claim overlay's global keydown listener must never turn one of
@@ -62,25 +65,6 @@ const LABELS: Record<ClaimType, { zh: string; py: string; key: string }> = {
   Hu:   { zh: '胡', py: 'HU',   key: 'H' },
 };
 
-// Changsha tile-id → glyph map.  IDs 0..26 are the 3 number suits 1-9
-// in stripe order (man=0..8 → 1m..9m, but Changsha drops m/s/p suit
-// markers and uses a single 27-tile deck of pin/dot/man depending on
-// the variant; we render a generic glyph since the overlay just needs
-// to communicate "this tile" to the player).  The actual sprite is
-// in three.js scene-space; we surface a textual fallback that's
-// always visible regardless of canvas state.
-function tileGlyph(tileId: number): string {
-  if (tileId < 0) return '?';
-  // Changsha (no honors, no winds in the claimable subset): 27 tiles.
-  // We map the index into 3 suits × 9 numerals.  This matches the
-  // display convention move-log.ts:tileGlyph() ships.
-  const suits = ['一二三四五六七八九', '①②③④⑤⑥⑦⑧⑨', '⓵⓶⓷⓸⓹⓺⓻⓼⓽'];
-  const suit = Math.floor(tileId / 9);
-  const num  = tileId % 9;
-  if (suit < 0 || suit >= suits.length) return '?';
-  return suits[suit][num] ?? '?';
-}
-
 export class ClaimWindowOverlay {
   private readonly game: GameLike;
   private root: HTMLDivElement | null = null;
@@ -89,8 +73,11 @@ export class ClaimWindowOverlay {
   private progressEl!: HTMLDivElement;
   private timerEl!: HTMLSpanElement;
   private hintEl!: HTMLDivElement;
+  private titleEl: HTMLElement | null = null;
   private passBtn!: HTMLButtonElement;
   private badges: Partial<Record<ClaimType, HTMLButtonElement>> = {};
+  private previews: Partial<Record<ClaimType, HTMLElement>> = {};
+  private previewNotes: Partial<Record<ClaimType, HTMLElement>> = {};
 
   private activeClaim: ClaimEntry | null = null;
   private lastClaimRef: ClaimEntry | null = null;
@@ -102,6 +89,7 @@ export class ClaimWindowOverlay {
 
   constructor(game: GameLike) {
     this.game = game;
+    onLanguageChange(() => { if (this.root !== null) this.refresh(); });
   }
 
   attach(): void {
@@ -125,8 +113,11 @@ export class ClaimWindowOverlay {
     this.root.remove();
     this.root = null;
     this.activeClaim = null;
+    this.lastClaimRef = null;
     this.unsubscribeActions?.();
     this.unsubscribeActions = null;
+    for (const preview of Object.values(this.previews)) preview?.replaceChildren();
+    this.previews = {}; this.previewNotes = {}; this.badges = {};
     if (this.keyboardBound) {
       window.removeEventListener('keydown', this.onKeyDown);
       this.keyboardBound = false;
@@ -145,7 +136,7 @@ export class ClaimWindowOverlay {
     root.setAttribute('aria-label', 'Claim window');
     root.hidden = true;
 
-    // Tile column — shows the claimable tile glyph.
+    // The offered tile comes only from the current authoritative window.
     const tile = document.createElement('div');
     tile.className = 'ferro-claim-tile';
     tile.setAttribute('aria-label', 'Claimable tile');
@@ -165,7 +156,8 @@ export class ClaimWindowOverlay {
     header.className = 'ferro-claim-header';
     const title = document.createElement('span');
     title.className = 'ferro-claim-title';
-    title.textContent = 'Claim window';
+    title.textContent = t('claims.title');
+    this.titleEl = title;
     const timerWrap = document.createElement('span');
     timerWrap.className = 'ferro-claim-timer';
     timerWrap.setAttribute('aria-live', 'polite');
@@ -214,6 +206,12 @@ export class ClaimWindowOverlay {
       py.textContent = LABELS[t].py;
       btn.appendChild(zh);
       btn.appendChild(py);
+      const preview = document.createElement('span');
+      preview.className = 'ferro-claim-badge-preview';
+      const note = document.createElement('small');
+      note.className = 'ferro-claim-choice-note';
+      btn.appendChild(preview); btn.appendChild(note);
+      this.previews[t] = preview; this.previewNotes[t] = note;
       // #137 — only render a shortcut hint when the badge actually has one
       // (Pung's `p` was removed to avoid colliding with the camera toggle).
       if (LABELS[t].key) {
@@ -251,7 +249,7 @@ export class ClaimWindowOverlay {
     // Hint line.
     const hint = document.createElement('div');
     hint.className = 'ferro-claim-hint';
-    hint.textContent = 'Click a chip or press the highlighted key — auto-pass at 0.';
+    hint.textContent = t('claims.preview_legend');
     center.appendChild(hint);
     this.hintEl = hint;
 
@@ -279,8 +277,10 @@ export class ClaimWindowOverlay {
     const claim = this.activeClaim;
     if (claim === null) {
       this.stopTicker();
+      this.lastClaimRef = null;
       this.root.hidden = true;
       this.root.classList.remove('ferro-claim-overlay-visible');
+      for (const preview of Object.values(this.previews)) preview?.replaceChildren();
       return;
     }
 
@@ -298,17 +298,35 @@ export class ClaimWindowOverlay {
 
     // Tile face + source seat.
     const face = this.tileEl.querySelector('.ferro-claim-tile-face') as HTMLDivElement | null;
-    if (face !== null) face.textContent = tileGlyph(Math.floor(claim.tile / 4));
+    if (face !== null) face.replaceChildren(createPhysicalTileFace(claim.tile, 'claim-offered-face', 'discard'));
     const src = this.tileEl.querySelector('.ferro-claim-tile-source') as HTMLDivElement | null;
-    if (src !== null) src.textContent = `Seat ${claim.source}`;
+    if (src !== null) {
+      const player = this.game.client?.seatPlayers[claim.source];
+      const name = player ? this.game.client?.nicks.get(player) : null;
+      src.textContent = t('claims.source', { player: name || `Seat ${claim.source}`,
+        wind: t(`claims.wind_${claim.source}`) });
+    }
+    if (this.hintEl) this.hintEl.textContent = t('claims.preview_legend');
+    if (this.titleEl) this.titleEl.textContent = t('claims.title');
 
     // Badge state.
-    for (const t of ['Pung', 'Chow', 'Kong', 'Hu'] as ClaimType[]) {
-      const btn = this.badges[t];
+    for (const type of ['Pung', 'Chow', 'Kong', 'Hu'] as ClaimType[]) {
+      const btn = this.badges[type];
       if (btn === undefined) continue;
-      const ok = claim.available.includes(t);
+      const ok = claim.available.includes(type);
       btn.disabled = !ok;
+      btn.hidden = !ok;
       btn.classList.toggle('ferro-claim-badge-available', ok);
+      const preview = this.previews[type], note = this.previewNotes[type];
+      preview?.replaceChildren();
+      if (note) note.textContent = '';
+      if (ok && type !== 'Hu' && preview && this.game.client) {
+        const tiles = claimPreview(this.game.client, claim, type);
+        if (tiles) preview.appendChild(createClaimPreview(tiles));
+        else if (note) note.textContent = type === 'Chow' && (claim.chowOptions?.length ?? 0) > 1
+          ? `${t('claims.choose_chow')} · ${t('claims.combinations', { count: claim.chowOptions!.length })}`
+          : t('claims.partners_unavailable');
+      }
     }
     this.passBtn.disabled = false;
 
@@ -365,9 +383,7 @@ export class ClaimWindowOverlay {
     this.root.classList.toggle('ferro-claim-critical', remaining <= 500);
 
     if (remaining <= 0) {
-      // game-ui.ts already auto-passes on its own timer; we just
-      // visually settle.  Don't double-fire pass — leave the wire
-      // contract to the trunk owner.
+      // Expiry is server-owned; settle visually without submitting a pass.
       this.stopTicker();
       this.activeClaim = null;
       this.root.classList.remove('ferro-claim-overlay-visible');

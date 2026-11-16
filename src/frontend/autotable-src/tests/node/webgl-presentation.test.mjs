@@ -25,7 +25,7 @@ function fixture(t, handLayout = 'in-table') {
 const at = (plan, id) => plan.entities.get(id).pose;
 const equalPose = (a, b) => assert.deepEqual(plain(a), plain(b));
 
-test('real FULL updates move a stable entitled tile in FINAL rectangular layout space, without restarting on identical FULLs', t => {
+test('real FULL updates move a stable entitled tile for 320ms in FINAL layout space, without restarting on identical FULLs', t => {
   const f = fixture(t);
   let frame = f.h.snapshot([['4', thing('hand.0@0', 1)]]);
   const id = frame.entities[0].entityId, before = f.draw(0).plan;
@@ -35,15 +35,17 @@ test('real FULL updates move a stable entitled tile in FINAL rectangular layout 
   equalPose(at(start.plan, id), at(before, id));
   assert.equal(start.cue.kind, 'discard');
   assert(at(start.plan, id).position.distanceTo(destination.position) > .05);
-  const halfway = f.draw(220);
+  const halfway = f.draw(260);
   assert(at(halfway.plan, id).position.distanceTo(destination.position) > 0);
   assert(at(halfway.plan, id).position.distanceTo(destination.position)
     < at(before, id).position.distanceTo(destination.position));
   const slot = halfway.plan.slots.get(frame.entities[0].slotName).poses[0];
   assert(slot.position.distanceTo(destination.position) < 1e-8, 'legal drop geometry remains the authoritative destination');
   f.h.snapshot([['4', thing('discard.0.0@0', 1)]], { activeSeat: 1, phase: 'AwaitingClaim' });
-  f.draw(250);
-  equalPose(at(f.draw(340).plan, id), destination);
+  f.draw(330);
+  assert(at(f.draw(340).plan, id).position.distanceTo(destination.position) > 0, 'travel must still be underway after the old 240ms duration');
+  assert(at(f.draw(419).plan, id).position.distanceTo(destination.position) > 0, 'the last millisecond before 320ms is still an intermediate pose');
+  equalPose(at(f.draw(420).plan, id), destination);
   assert(f.draw(749).cue);
   assert.equal(f.draw(751).cue, null, 'identical FULLs cannot extend the latest-action hold');
   assert.equal(f.motion.latestDiscardId, id, 'the latest discard remains statically marked after its brief accent');
@@ -63,8 +65,8 @@ test('a newly public reveal travels from a public seat anchor and never links to
   assert(at(start.plan, id).position.distanceTo(at(before, hiddenId).position) > .01);
   assert(at(start.plan, id).position.distanceTo(destination.position) > .05);
   assert.equal(start.cue.seat, 1);
-  assert(at(f.draw(220).plan, id).position.distanceTo(destination.position) > 0);
-  equalPose(at(f.draw(340).plan, id), destination);
+  assert(at(f.draw(260).plan, id).position.distanceTo(destination.position) > 0);
+  equalPose(at(f.draw(420).plan, id), destination);
 });
 
 test('bursts retarget the last displayed pose, retain one tween per current visible entity and finish at the newest target', t => {
@@ -82,7 +84,7 @@ test('bursts retarget the last displayed pose, retain one tween per current visi
     assert.equal(f.motion.motions.size, 1);
     displayed = at(f.draw(181.5 + index).plan, id);
   }
-  equalPose(at(f.draw(451).plan, id), at(f.target(), id));
+  equalPose(at(f.draw(531).plan, id), at(f.target(), id));
   assert.equal(f.draw(861).cue, null);
 });
 
@@ -153,14 +155,14 @@ test('separate-hand discard and public claim arrivals never interpolate between 
   assert(at(start.plan, id).position.y > target.position.y);
   assert(at(start.plan, id).scale < target.scale, 'arrival remains visible even through an orthographic/flat camera');
   assert.equal(start.cue.sourceSeat, 0);
-  equalPose(at(f.draw(340).plan, id), target);
+  equalPose(at(f.draw(420).plan, id), target);
   f.h.snapshot([['4', thing('meld.0.0@0', 1)]]);
-  target = at(f.target(), id); start = f.draw(400);
+  target = at(f.target(), id); start = f.draw(480);
   assert.equal(start.plan.entities.get(id).separate, true);
   assert.equal(at(start.plan, id).position.x, target.position.x);
   assert.equal(at(start.plan, id).position.z, target.position.z);
   assert.equal(start.cue.kind, 'meld');
-  equalPose(at(f.draw(640).plan, id), target);
+  equalPose(at(f.draw(800).plan, id), target);
 });
 
 test('retired/revoked visible entitlements are purged at publication, with no retained faces or ghost cue', t => {

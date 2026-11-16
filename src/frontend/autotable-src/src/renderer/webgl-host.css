@@ -71,3 +71,40 @@
     box-shadow: 0 2px #4e8d8a;
 }
 .webgl-latest-caption { max-width: 5rem; font-size: 11px; font-weight: 600; line-height: 1.25; }
+.webgl-meld-callout {
+    position: absolute;
+    /* Keep seat placement atomic despite the global reduced-motion duration. */
+    transition-property: none !important;
+    box-sizing: border-box;
+    max-width: var(--meld-max-width, 10rem);
+    padding: 8px 12px;
+    overflow: hidden;
+    color: #ffe193;
+    pointer-events: none;
+    user-select: none;
+}
+.webgl-meld-callout[hidden] { display: none; }
+.webgl-meld-word {
+    display: block;
+    font: italic 900 clamp(22px, 3.8vw, 36px)/1.1 system-ui, sans-serif;
+    letter-spacing: .025em;
+    white-space: nowrap;
+    -webkit-text-stroke: 2px #062e38;
+    paint-order: stroke fill;
+    text-shadow: 2px 3px 0 #031e27;
+    transform-origin: center;
+    animation: webgl-meld-pop 1050ms both;
+    animation-delay: var(--meld-delay, 0ms);
+    pointer-events: none;
+}
+.webgl-meld-callout[data-reduced="true"] .webgl-meld-word {
+    animation: none !important;
+    opacity: 1;
+    transform: none;
+}
+@keyframes webgl-meld-pop {
+    0% { opacity: 0; transform: scale(.82) rotate(-5deg); }
+    16% { opacity: 1; transform: scale(1.04) rotate(-2deg); }
+    26%, 78% { opacity: 1; transform: scale(1) rotate(-2deg); }
+    100% { opacity: 0; transform: scale(1) rotate(-2deg); }
+}

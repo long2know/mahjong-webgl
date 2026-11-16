@@ -260,6 +260,11 @@ public sealed class HandResultEntry
     [JsonPropertyName("hand")]
     public List<int> Hand { get; set; } = [];
 
+    /// <summary>Optional presentation-only partition of the already revealed winning hand.</summary>
+    [JsonPropertyName("handGroups")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public List<HandGroupEntry>? HandGroups { get; set; }
+
     /// <summary>Banker seat for the next hand per Changsha v1.2 rotation.</summary>
     [JsonPropertyName("nextBanker")]
     public int NextBanker { get; set; }
@@ -285,6 +290,20 @@ public sealed class HandResultEntry
     [JsonPropertyName("continuation")]
     [JsonIgnore(Condition = JsonIgnoreCondition.Never)]
     public HandResultContinuationEntry? Continuation { get; set; }
+}
+
+public sealed class HandGroupEntry
+{
+    /// <summary>chow, pung, pair, concealedKong, exposedKong, addedKong, or a nonstandard special residual.</summary>
+    [JsonPropertyName("kind")]
+    public string Kind { get; set; } = string.Empty;
+
+    [JsonPropertyName("tileIds")]
+    public List<int> TileIds { get; set; } = [];
+
+    /// <summary>Whether this meld was exposed during play, not a visibility entitlement.</summary>
+    [JsonPropertyName("exposed")]
+    public bool Exposed { get; set; }
 }
 
 public sealed class HandResultContinuationEntry

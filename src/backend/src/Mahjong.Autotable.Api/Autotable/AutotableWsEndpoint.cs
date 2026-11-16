@@ -2258,9 +2258,19 @@ public sealed partial class AutotableConnectionManager : IDisposable
             // no stale numeric/opaque key can accumulate across updates or reconnects.
             // Claim choices and own-turn actions also contain private hand information;
             // neither collection may enter this shared store.
+            var existingBotNames = gameState.Snapshot()
+                .Where(entry => entry.Kind == "nicks"
+                    && entry.Value is JsonElement { ValueKind: JsonValueKind.String } value
+                    && !string.IsNullOrWhiteSpace(value.GetString())
+                    && runtimeState.Seats.Any(seat => seat.IsBot
+                        && string.Equals(seat.PlayerId, entry.Key?.ToString(), StringComparison.Ordinal)))
+                .Select(entry => entry.Key?.ToString()).ToHashSet(StringComparer.Ordinal);
             var neutralForStore = new List<CollectionEntry>(translatorEntries.Count);
             foreach (var entry in translatorEntries)
             {
+                // Generated names are defaults, not a reason to rename an existing/custom bot.
+                if (entry.Kind == "nicks" && existingBotNames.Contains(entry.Key?.ToString()))
+                    continue;
                 if (!IsViewerPrivateCollection(entry.Kind))
                     neutralForStore.Add(entry);
             }

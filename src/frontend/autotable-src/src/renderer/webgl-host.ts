@@ -28,6 +28,8 @@ export class WebglHost implements RendererHost {
   private media: MediaQueryList | null = null;
   private disposed = false;
   private suspended = false;
+  private hidden = false;
+  private repaint = false;
   private separateHand = false;
   private sessionId: string | null = null;
   private queue: { layout: Layout; frame: Frame } | null = null;
@@ -69,7 +71,8 @@ export class WebglHost implements RendererHost {
     main.append(this.canvas, this.panel, this.insets);
     const loading = document.getElementById('loading');
     if (loading) loading.hidden = true;
-    this.suspended = document.hidden || !document.hasFocus();
+    this.hidden = document.hidden;
+    this.suspended = this.hidden || !document.hasFocus();
     const signal = this.events.signal;
     window.addEventListener('resize', this.resize, { signal });
     window.addEventListener('orientationchange', this.resize, { signal });
@@ -125,6 +128,7 @@ export class WebglHost implements RendererHost {
         },
       });
       this.state = 'awaiting-ready';
+      this.repaint = this.suspended && !document.hidden;
       this.watchStartup();
       this.hooks.notice('Shift + right-drag pans; Alt-left/middle drag or two fingers orbit, zoom and reset.');
       this.schedule();
@@ -137,6 +141,7 @@ export class WebglHost implements RendererHost {
     if (this.disposed) return;
     this.input?.rejected();
     this.sessionId = sessionId; this.queue = null; this.inFlight = null; this.lastRendered = 0;
+    this.repaint = this.suspended && !document.hidden;
     this.inputBlocked = true; this.scene?.clear(); this.removeMarkers();
     if (this.animation) cancelAnimationFrame(this.animation);
     this.animation = 0;
@@ -201,19 +206,25 @@ export class WebglHost implements RendererHost {
   }
 
   private schedule(): void {
-    if (this.disposed || this.suspended || !this.scene || this.animation || !this.viewport
+    if (this.disposed || document.hidden || this.suspended && !this.repaint && !this.inFlight
+      || !this.scene || this.animation || !this.viewport
       || ['failed', 'unsupported', 'unavailable'].includes(this.state) || !this.queue && !this.inFlight) return;
     this.animation = requestAnimationFrame(this.tick);
   }
   private readonly tick = (): void => {
     this.animation = 0;
-    if (this.disposed || this.suspended || !this.scene || !this.viewport) return;
+    if (this.disposed || document.hidden || this.suspended && !this.repaint && !this.inFlight || !this.scene || !this.viewport) return;
     try {
       this.receipt();
       if (this.inFlight && performance.now() - this.inFlight.started > 30000) throw Error('WebGL stopped completing GPU frames.');
-      if (!this.inFlight && this.queue) {
+      if (!this.inFlight && this.queue && (!this.suspended || this.repaint)) {
         const { layout, frame } = this.queue;
         this.queue = null;
+        this.repaint = false;
+        // A backing-size assignment erases the presented WebGL image. Defer it
+        // until its replacement can be drawn in this same animation callback.
+        if (this.canvas.width !== this.viewport.widthPx) this.canvas.width = this.viewport.widthPx;
+        if (this.canvas.height !== this.viewport.heightPx) this.canvas.height = this.viewport.heightPx;
         this.scene.draw(layout, frame, this.viewport);
         this.inFlight = { frame, viewport: this.viewport.resizeRevision, started: performance.now() };
       }
@@ -221,7 +232,7 @@ export class WebglHost implements RendererHost {
     } catch (error) { this.unavailable(error instanceof Error ? error.message : 'WebGL frame failed.'); }
   };
   private receipt(): void {
-    if (!this.inFlight || !this.scene || this.suspended) return;
+    if (!this.inFlight || !this.scene || document.hidden) return;
     const commit = this.scene.poll();
     if (!commit) return;
     const sent = this.inFlight;
@@ -238,7 +249,7 @@ export class WebglHost implements RendererHost {
     };
     assertDto('FrameRendered', receipt);
     this.lastRendered = frame.frameId;
-    this.inputBlocked = !!this.queue && (this.queue.frame.session.viewSeat !== frame.session.viewSeat
+    this.inputBlocked = this.suspended || !!this.queue && (this.queue.frame.session.viewSeat !== frame.session.viewSeat
       || JSON.stringify(this.queue.frame.presentation) !== JSON.stringify(frame.presentation))
       || commit.viewport.resizeRevision !== this.viewport?.resizeRevision;
     this.state = 'ready'; this.panel.hidden = true;
@@ -314,7 +325,6 @@ export class WebglHost implements RendererHost {
     this.cancelInput(); this.scene?.cancelPending(); this.scene?.resetPresentation(); this.inFlight = null;
     this.viewport = next; this.hooks.resized(next);
     if (this.disposed || this.viewport !== next) return;
-    this.canvas.width = next.widthPx; this.canvas.height = next.heightPx;
     this.schedule();
   }
   private watchDpr(): void {
@@ -324,15 +334,21 @@ export class WebglHost implements RendererHost {
   }
   private readonly dprChanged = (): void => { this.measure(); this.watchDpr(); };
   private readonly visibility = (): void => {
-    const suspended = document.hidden || !document.hasFocus();
-    if (suspended === this.suspended) return;
+    const hidden = document.hidden, suspended = hidden || !document.hasFocus();
+    const visibilityChanged = hidden !== this.hidden;
+    if (suspended === this.suspended && !visibilityChanged) return;
+    this.hidden = hidden;
     this.suspended = suspended;
     this.watchStartup();
     this.cancelInput();
     if (suspended) {
       if (this.animation) cancelAnimationFrame(this.animation);
-      this.animation = 0; this.scene?.cancelPending(); this.scene?.resetPresentation(); this.inFlight = null;
-    } else {
+      this.animation = 0; this.repaint = false; this.scene?.cancelPending(); this.scene?.resetPresentation(); this.inFlight = null;
+    }
+    if (!hidden && (!suspended || visibilityChanged)) {
+      // Visibility may return before window focus. Permit one fenced visual
+      // refresh, not an unfocused producer/render loop or gameplay input.
+      this.repaint = suspended;
       this.measure(true); this.hooks.resumed(); this.schedule();
     }
   };
@@ -351,13 +367,14 @@ export class WebglHost implements RendererHost {
     this.description.textContent = message;
     this.panel.hidden = false; this.main.setAttribute('aria-busy', 'false');
     if (this.animation) cancelAnimationFrame(this.animation);
-    this.animation = 0; this.inputBlocked = true; this.input?.rejected();
+    this.animation = 0; this.repaint = false; this.inputBlocked = true; this.input?.rejected();
     this.queue = null; this.inFlight = null; this.scene?.clear();
     this.removeMarkers(); this.hooks.failure();
   }
   async dispose(): Promise<void> {
     if (this.disposed) return;
     this.disposed = true; this.state = 'disposed';
+    this.repaint = false;
     this.watchStartup();
     if (this.animation) cancelAnimationFrame(this.animation);
     this.events.abort(); this.observer?.disconnect(); this.mutations?.disconnect();

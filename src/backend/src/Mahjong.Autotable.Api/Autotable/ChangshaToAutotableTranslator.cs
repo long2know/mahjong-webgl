@@ -31,6 +31,8 @@ namespace Mahjong.Autotable.Api.Autotable;
 /// </summary>
 public static class ChangshaToAutotableTranslator
 {
+    private static readonly string[] BotNicknames = ["JadeFox", "BambooPanda", "CloudCrane", "LotusTiger"];
+
     // ── Rotation index constants (see upstream src/setup-slots.ts) ────
 
     private const int WallRotFaceDown = 0;
@@ -450,11 +452,59 @@ public static class ChangshaToAutotableTranslator
                 .Select(kv => new ScoreDeltaEntry { Seat = kv.Key, Delta = kv.Value })
                 .ToList(),
             Hand = winningHand,
+            HandGroups = BuildWinningHandGroups(state, winningHand),
             NextBanker = nextBanker,
             WinResult = winResult,
             ScoreResult = scoreResult,
             Continuation = BuildHandResultContinuation(state)
         };
+    }
+
+    private static List<HandGroupEntry>? BuildWinningHandGroups(ChangshaGameState state, IReadOnlyList<int> winningHand)
+    {
+        if (state.Phase != ChangshaPhase.EndHand || state.CurrentWin is not { } win || state.CurrentScore is null
+            || winningHand.Count == 0 || winningHand.Any(tile => tile is < 0 or >= 108)
+            || winningHand.Distinct().Count() != winningHand.Count
+            || winningHand.Count(tile => tile == win.WinningTileId) != 1)
+            return null;
+        var hand = state.Hands.FirstOrDefault(candidate => candidate.SeatIndex == win.WinningSeatIndex);
+        if (hand is null || ChangshaWinDetector.DescribeWinningGroups(hand, win) is not { } concealed)
+            return null;
+
+        var groups = new List<HandGroupEntry>();
+        foreach (var meld in hand.Melds)
+        {
+            var kind = meld.Kind switch
+            {
+                MeldKind.Chow => "chow",
+                MeldKind.Pung => "pung",
+                MeldKind.ConcealedKong => "concealedKong",
+                MeldKind.ExposedKong => "exposedKong",
+                MeldKind.AddedKong => "addedKong",
+                _ => null
+            };
+            if (kind is null) return null;
+            var logicals = meld.TileIds.Select(ChangshaDeckBuilder.GetLogicalTile).Order().ToArray();
+            if (meld.Kind == MeldKind.Chow)
+            {
+                if (logicals.Length != 3 || logicals[0] / 9 != logicals[2] / 9
+                    || logicals[1] != logicals[0] + 1 || logicals[2] != logicals[0] + 2) return null;
+            }
+            else if (logicals.Length != (meld.Kind == MeldKind.Pung ? 3 : 4)
+                || logicals.Any(tile => tile != logicals[0]))
+            {
+                return null;
+            }
+            groups.Add(new()
+            {
+                Kind = kind, TileIds = meld.TileIds.ToList(), Exposed = meld.Kind != MeldKind.ConcealedKong
+            });
+        }
+        groups.AddRange(concealed.Select(group => new HandGroupEntry
+        {
+            Kind = group.Kind, TileIds = group.TileIds.ToList(), Exposed = false
+        }));
+        return groups.SelectMany(group => group.TileIds).Order().SequenceEqual(winningHand.Order()) ? groups : null;
     }
 
     private static HandResultContinuationEntry? BuildHandResultContinuation(ChangshaGameState state)
@@ -819,5 +869,5 @@ public static class ChangshaToAutotableTranslator
         string.IsNullOrEmpty(seat.PlayerId) ? $"seat-{seat.SeatIndex}" : seat.PlayerId;
 
     private static string SeatNickname(ChangshaSeatState seat) =>
-        seat.IsBot ? $"Bot {seat.SeatIndex}" : $"Seat {seat.SeatIndex}";
+        seat.IsBot ? BotNicknames[seat.SeatIndex] : $"Seat {seat.SeatIndex}";
 }

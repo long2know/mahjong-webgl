@@ -5,16 +5,33 @@ import { createHash } from 'node:crypto';
 import { createRequire } from 'node:module';
 import { execFileSync } from 'node:child_process';
 import { pathToFileURL } from 'node:url';
+import { readSeatCallout, qualifySeatCallout } from './seat-callout-observation.mjs';
 
-const help = `Usage: node tests/migration/browser-ux.mjs http://127.0.0.1:5097|5098 [--capture]
+const help = `Usage: node tests/migration/browser-ux.mjs http://127.0.0.1:5097|5098|5099 [--capture]
   [--setup-only] [--baseline artifacts/<before>/browser/setup.json]
   [--manual-receipt artifacts/<canonical-manual>/browser/receipt.json]
+  [--callouts-only --callout-word Pung|Chow|Kong|Meld
+    --callout-seat 0|1|2|3 --callout-seed <accepted-game-fixture-seed>]
+  [--callout-selector <override default .webgl-meld-callout>]
 
 Default: qualification, requiring an actual BEFORE setup capture.
 --capture records observations, never a passing integration verdict. No authority is injected.
 --setup-only is capture-only: exercise the real setup and submission without repeating game orbits.
 Output: artifacts/$MAHJONG_ARTIFACT_NAME/browser/ (a new directory is required).
 Chrome inherits the caller's profile/temp environment; this script does not change it.
+5098 may be a persistent user preview: use the coordinator-assigned 5099 fixture for
+follow-up testing. A manual receipt must match the actual target origin, including port.
+--callouts-only is restricted to 5099 and needs an independently verified seed/word/
+owning-seat fixture. It observes .webgl-meld-callout > .webgl-meld-word and the actual
+scene.committed.meldCallout identity/start/expiry, never the ahead-of-GPU presentation getter.
+It replays human seat0 + three Hard bots, first legal discards and ordinary passes, at
+landscape/portrait/desktop/reduced sizes. It does NOT classify tiles as the expected-word
+oracle or inject FULLs. Establish the word independently from an accepted claim or by
+reviewing the captured public meld members/screenshots, never from the comic label itself.
+During the comic lifetime this driver polls only a small progress summary, continues
+ordinary Pass, and holds the next human discard until public meld +1800ms. Full trace
+transfer and the expired screenshot happen afterward. First/mid observations are actual
+GPU-receipt metadata, NOT accepted/mid PNGs captured after expiry; visual recordings are separate.
 
 The final Frontend binding observes scene.committed.cue/discardId and actual public labels.
 It never reconstructs an animation, guesses concealed tile identities, or alters authority.
@@ -140,6 +157,11 @@ function installUxProbe() {
 
 function readPresentation(scene) {
   const commit = scene.committed, cue = commit.cue;
+  const timer = document.querySelector('.ferro-claim-timer-value');
+  const claimClock = timer?.getClientRects().length ? {
+    observedAtEpoch: Date.now(), uiSeconds: Number(timer.textContent),
+    deadlines: [...(window.game?.client?.claim?.entries() ?? [])].map(([, claim]) => claim?.deadline).filter(Number.isFinite),
+  } : null;
   return {
     latestDiscardEntityId: commit.discardId ?? null,
     latestAction: cue ? { kind: cue.kind, entityId: cue.entityId, seat: cue.seat,
@@ -147,6 +169,8 @@ function readPresentation(scene) {
     publicLabels: [...document.querySelectorAll('.webgl-action,.webgl-seat')]
       .filter(node => !node.hidden && node.getClientRects().length).map(node => node.textContent),
     latestDiscardLabelVisible: !!document.querySelector('.webgl-latest:not([hidden])'),
+    claimClock,
+    callout: window.__uxCalloutSelector ? window.__uxReadCallout(scene, window.__uxCalloutSelector) : null,
   };
 }
 
@@ -216,14 +240,20 @@ export function actualRoomReady(room) {
     && committed?.session?.gameId === room && committed?.session?.snapshotReady === true;
 }
 
-async function main() {
-  if (process.argv.includes('--help')) { console.log(help); return; }
-  const args = process.argv.slice(2), target = new URL(args.shift());
+export function fixtureTarget(value) {
+  const target = new URL(value);
   assert.equal(target.protocol, 'http:');
   assert.equal(target.hostname, '127.0.0.1', 'Only an explicitly isolated loopback fixture is allowed');
-  assert(['5097', '5098'].includes(target.port), 'Only assigned BEFORE/AFTER fixture ports 5097/5098 are allowed; never 5086');
+  assert(['5097', '5098', '5099'].includes(target.port),
+    'Only assigned fixture ports 5097/5098/5099 are allowed; never 5086');
   assert.equal(target.pathname, '/');
   assert.equal(target.search + target.hash + target.username + target.password, '');
+  return target;
+}
+
+async function main() {
+  if (process.argv.includes('--help')) { console.log(help); return; }
+  const args = process.argv.slice(2), target = fixtureTarget(args.shift());
   const capture = args.includes('--capture');
   const option = name => {
     const at = args.indexOf(name);
@@ -232,13 +262,29 @@ async function main() {
     return args[at + 1];
   };
   const setupOnly = args.includes('--setup-only');
+  const calloutsOnly = args.includes('--callouts-only');
   assert(!setupOnly || capture, '--setup-only is capture-only, never a partial passing qualification');
-  const known = new Set(['--capture', '--setup-only', '--baseline', '--manual-receipt']);
+  assert(!calloutsOnly || !capture && !setupOnly && target.port === '5099',
+    'Callout qualification is only for the new owned 5099 fixture, never persistent 5098');
+  assert(calloutsOnly || !args.some(arg => arg.startsWith('--callout-')),
+    'Callout selectors/expectations require --callouts-only; never silently omit the new gate');
+  const known = new Set(['--capture', '--setup-only', '--baseline', '--manual-receipt', '--callouts-only',
+    '--callout-selector', '--callout-word', '--callout-seat', '--callout-seed']);
   for (let index = 0; index < args.length; index++) {
     assert(known.has(args[index]), `Unknown option: ${args[index]}`);
-    if (!['--capture', '--setup-only'].includes(args[index])) index++;
+    if (!['--capture', '--setup-only', '--callouts-only'].includes(args[index])) index++;
+  }
+  const callout = calloutsOnly ? { selector: option('--callout-selector') ?? '.webgl-meld-callout', word: option('--callout-word'),
+    seat: Number(option('--callout-seat')), seed: option('--callout-seed') } : null;
+  if (callout) {
+    assert(callout.selector && ['Pung', 'Chow', 'Kong', 'Meld'].includes(callout.word)
+      && option('--callout-seat') !== null && [0, 1, 2, 3].includes(callout.seat)
+      && /^\d+$/.test(callout.seed ?? ''),
+    'An independently verified seed/word/owner is required; do not guess a classifier oracle');
   }
   const baselineName = option('--baseline');
+  assert(target.port !== '5099' || calloutsOnly || setupOnly || option('--manual-receipt'),
+    'Full 5099 regression requires an explicit 5099 --manual-receipt; never reuse/mask the persistent 5098 origin');
   const manualName = option('--manual-receipt')
     ?? `artifacts/ux-${target.port === '5097' ? 'before' : 'after'}-manual/browser/receipt.json`;
   let baseline = null;
@@ -264,6 +310,7 @@ async function main() {
     source: execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim(),
     sourceDirty: execFileSync('git', ['status', '--porcelain'], { encoding: 'utf8' }).trim().length > 0,
     harnessSha256: hash(fs.readFileSync(new URL(import.meta.url))),
+    calloutObservationSha256: callout ? hash(fs.readFileSync(new URL('./seat-callout-observation.mjs', import.meta.url))) : null,
     qualification: 'Actual seeded games and GPU-fence-correlated geometry; headless Chrome/software GPU and touch emulation, not physical-device performance.',
     unqualified: setupOnly ? ['Setup-only capture: no gameplay or integration approval.'] : [] };
   const require = createRequire(path.join(root, 'src/frontend/autotable-src/package.json'));
@@ -278,7 +325,7 @@ async function main() {
     assert.equal(manifest.engine, 'webgl2');
     assert.equal(manifest.artifactKind, 'mahjong-web-build');
     receipt.application = { sourceRevision: manifest.sourceRevision, manifestSha256: hash(manifestBytes) };
-    if (!capture && target.port === '5098') assert.notEqual(receipt.application.manifestSha256,
+    if (!capture && ['5098', '5099'].includes(target.port)) assert.notEqual(receipt.application.manifestSha256,
       baseline.application.manifestSha256, 'AFTER qualification cannot silently compare the BEFORE build to itself');
     browser = await chromium.launch({ executablePath: process.env.CHROME_PATH ?? '/usr/bin/google-chrome', headless: true,
       args: ['--no-sandbox', '--disable-dev-shm-usage', '--use-angle=swiftshader', '--enable-unsafe-swiftshader',
@@ -289,7 +336,9 @@ async function main() {
       const context = await browser.newContext({ viewport, deviceScaleFactor: touch ? 2 : 1,
         isMobile: touch, hasTouch: touch, locale: 'en-US',
         reducedMotion: reduced ? 'reduce' : 'no-preference', serviceWorkers: 'block' });
-      await context.addInitScript({ content: `window.__uxReadPresentation = (${readPresentation.toString()});` });
+      await context.addInitScript({ content: `window.__uxReadPresentation = (${readPresentation.toString()});
+        window.__uxReadCallout = (${readSeatCallout.toString()});
+        window.__uxCalloutSelector = ${JSON.stringify(callout?.selector ?? null)};` });
       await context.addInitScript(installUxProbe);
       await context.route('**/*', route => {
         const url = new URL(route.request().url());
@@ -299,7 +348,7 @@ async function main() {
         }
         return route.continue();
       });
-      const page = await context.newPage(), wire = [];
+      const page = await context.newPage(), wire = [], fullSnapshots = [];
       page.setDefaultTimeout(15000);
       page.on('pageerror', error => receipt.errors.push(`${name}: ${error.message}`));
       page.on('request', request => receipt.requests.push({ case: name,
@@ -307,6 +356,14 @@ async function main() {
         method: request.method(), navigation: request.isNavigationRequest() }));
       page.on('websocket', socket => {
         assert.equal(new URL(socket.url()).host, target.host);
+        socket.on('framereceived', frame => {
+          for (const fragment of String(frame.payload).split('\u001e').filter(Boolean)) {
+            try {
+              const value = JSON.parse(fragment);
+              if (value.full === true && Array.isArray(value.entries)) fullSnapshots.push({ epochMilliseconds: Date.now() });
+            } catch {}
+          }
+        });
         socket.on('framesent', frame => {
           for (const fragment of String(frame.payload).split('\u001e').filter(Boolean)) {
             try {
@@ -319,7 +376,7 @@ async function main() {
       const room = `${runId}-${name}`;
       await page.goto(`${target.origin}/?${new URLSearchParams({ gameId: room, createGame: room,
         variant: 'changsha', seat: spectator ? '-1' : '0', botCount: spectator ? '4' : '3',
-        dealMode: 'auto', seed: '20261010' })}`,
+        dealMode: 'auto', seed: callout?.seed ?? '20261010', ...(callout ? { botDifficulty: 'Hard' } : {}) })}`,
       { waitUntil: 'domcontentloaded' });
       for (const selector of ['#onboarding-skip', '#tour-skip']) {
         const skip = page.locator(selector);
@@ -334,7 +391,7 @@ async function main() {
       assert.equal(await page.evaluate(() => window.game.renderer.engine), 'webgl2');
       assert.equal(await page.evaluate(() => typeof window.MahjongUnityBridge), 'undefined');
       assert.equal(await page.evaluate(() => matchMedia('(prefers-reduced-motion: reduce)').matches), reduced);
-      const value = { page, context, name, wire, touch, reduced };
+      const value = { page, context, name, wire, fullSnapshots, touch, reduced };
       traces.set(name, value);
       return value;
     }
@@ -355,15 +412,19 @@ async function main() {
       return state;
     }
 
-    async function ownTurn(test, deadline) {
-      while (Date.now() < deadline) {
-        const state = await test.page.evaluate(() => ({
+    async function humanDecision(test) {
+      return test.page.evaluate(() => ({
           ready: window.game.adapter.latest?.entities.some(entity => entity.interaction.canDiscard
             && window.game.renderer.scene.committed?.frame.entities.some(committed =>
               committed.entityId === entity.entityId && committed.interaction.canDiscard)),
           pass: !!document.querySelector('.ferro-claim-pass:not(:disabled)')?.getClientRects().length,
           failed: window.game.renderer.state !== 'ready',
         }));
+    }
+
+    async function ownTurn(test, deadline) {
+      while (Date.now() < deadline) {
+        const state = await humanDecision(test);
         assert.equal(state.failed, false, 'Renderer became unavailable during the real game');
         if (state.pass) await test.page.locator('.ferro-claim-pass').click();
         else if (state.ready) return;
@@ -491,6 +552,16 @@ async function main() {
       const trace = await test.page.evaluate(() => window.__ux);
       assertTrace(trace);
       const framing = !capture && sequence ? qualifyHandFraming(trace) : null;
+      if (!capture && target.port === '5099' && sequence && !test.reduced) {
+        const clocks = trace.frames.map(frame => frame.cue?.claimClock).filter(clock => clock
+          && clock.uiSeconds > 5.5 && clock.deadlines.some(deadline => {
+            const remaining = deadline - clock.observedAtEpoch;
+            return remaining > 5500 && remaining <= 8500 && Math.abs(remaining - clock.uiSeconds * 1000) < 400;
+          }));
+        assert(clocks.length, 'Observe the actual eight-second claim UI against its advertised deadline; a five-second cap must fail');
+        receipt.cases.push({ name: 'actual-eight-second-claim-countdown',
+          observed: clocks[0], scope: 'Actual UI/public deadline; Backend late-human-claim test separately proves submission past five seconds.' });
+      }
       const botDrawToDiscard = trace.moves.filter(move => move.kind === 'discard' && move.seat !== 0)
         .flatMap(move => {
           const draw = trace.moves.findLast(value => value.kind === 'draw' && value.seat === move.seat && value.at < move.at);
@@ -505,6 +576,53 @@ async function main() {
         timingScope: 'Viewer-safe state publication arrival intervals; not server execution or physical-device performance.' });
     }
 
+    if (calloutsOnly) {
+      for (const [name, viewport, touch, reduced] of [
+        ['callout-landscape', { width: 844, height: 390 }, true, false],
+        ['callout-portrait', { width: 390, height: 844 }, true, false],
+        ['callout-desktop', { width: 1280, height: 800 }, false, false],
+        ['callout-reduced', { width: 844, height: 390 }, true, true],
+      ]) {
+        const test = await newGame(name, viewport, { touch, reduced });
+        const deadline = Date.now() + 90000;
+        let progress;
+        do {
+          progress = await test.page.evaluate(seat => {
+            const probe = window.__ux;
+            const meld = probe.moves.find(move => move.kind === 'meld' && move.seat === seat);
+            return { meldAt: meld?.at ?? null, lastGpuAt: probe.frames.at(-1)?.at ?? null };
+          }, callout.seat);
+          if (progress.meldAt !== null && progress.lastGpuAt >= progress.meldAt + 1800) break;
+          const decision = await humanDecision(test);
+          assert.equal(decision.failed, false, 'Renderer became unavailable during the real fixture replay');
+          if (decision.pass) await test.page.locator('.ferro-claim-pass').click();
+          else if (decision.ready && progress.meldAt === null) await discard(test);
+          await sleep(80);
+        } while (Date.now() < deadline);
+        const trace = await test.page.evaluate(() => window.__ux);
+        const meld = trace.moves.find(move => move.kind === 'meld' && move.seat === callout.seat);
+        assertTrace(trace);
+        assert(meld, 'The supplied seed did not produce its expected real accepted meld before the bounded deadline');
+        write(path.join(output, `${name}-trace.json`), { ...trace, fullSnapshots: test.fullSnapshots });
+        const evidence = qualifySeatCallout(trace, callout, test.fullSnapshots, reduced);
+        const frames = trace.frames.filter(frame => frame.at >= meld.at && frame.at < meld.at + 1800
+          && frame.sessionId === meld.sessionId && frame.frameId >= meld.frameId);
+        const shown = frames.filter(frame => frame.cue?.callout);
+        const observations = [
+          { phase: 'first-visible', sample: shown[0] },
+          { phase: 'mid-visible', sample: shown[Math.floor(shown.length / 2)] },
+          { phase: 'last-visible', sample: shown.at(-1) },
+          { phase: 'expired', sample: frames.find(frame => frame.at >= meld.at + 1500 && !frame.cue?.callout) },
+        ];
+        write(path.join(output, `${name}-gpu-observations.json`), {
+          scope: 'Actual recorded GPU publication/DOM metadata selected after the temporal window; not screenshots or reconstructed frames.',
+          observations,
+        });
+        receipt.cases.push({ name, viewport, ...evidence, observations: `${name}-gpu-observations.json` });
+        await snapshot(test, `${name}-expired`);
+        await test.context.close();
+      }
+    } else {
     if (!setupOnly) {
     const landscape = await newGame('landscape', { width: 844, height: 390 });
     await snapshot(landscape, 'neutral-844x390');
@@ -679,8 +797,9 @@ async function main() {
         controls: defaults.length, submission: observed.submission, baseline: baselineName });
       await test.context.close();
     }
+    }
     await browser.close(); browser = null;
-    if (!setupOnly) {
+    if (!setupOnly && !calloutsOnly) {
     const manualPath = fs.realpathSync(path.resolve(root, manualName));
     assert(manualPath.startsWith(path.join(root, 'artifacts') + path.sep) && manualPath.endsWith('.json'));
     const manual = JSON.parse(fs.readFileSync(manualPath, 'utf8'));

@@ -2,14 +2,15 @@ import { Matrix4, Vector3 } from 'three';
 import { compileProgram } from './gpu/program';
 import {
   beveledTileGeometry, createTileMesh, disposeTileMesh, drawTileMesh, setTileInstance, uploadTileInstances,
-  TILE_DEPTH, TILE_HEIGHT, TILE_INSTANCE_VS, type TileMesh,
+  TILE_DEPTH, TILE_HEIGHT, TILE_WIDTH, TILE_INSTANCE_VS, type TileMesh,
 } from './gpu/tile-mesh';
 import { invertMatrix4, pickTile, type PickRay } from './gpu/picking';
 import type { Frame, Layout, Viewport } from './renderer-contract';
 import { buildWebglPlan, fittedCamera, tileModel, type Rect, type RenderPose, type WebglPlan } from './webgl-layout';
 import { pickableModels, tileMaterialId, tileSurface } from './webgl-style';
-import { WebglPresentation, type MoveCue } from './webgl-presentation';
+import { WebglPresentation, type MeldCallout, type MoveCue } from './webgl-presentation';
 import { t } from '../i18n';
+import { isReducedMotionActive } from '../theme';
 
 const faceAtlases = [
   new URL('../../art/tiles/Faces.png', import.meta.url).href,
@@ -63,6 +64,7 @@ interface SlotBatch { modelData: Float32Array; instanceCount: number; names: str
 interface PickBatch { modelData: Float32Array; instanceCount: number; targets: Array<Target | null> }
 export interface SceneCommit {
   frame: Frame; plan: WebglPlan; viewport: Viewport; milliseconds: number; cue: MoveCue | null; discardId: string | null;
+  meldCallout: MeldCallout | null;
 }
 const capacity = 4096;
 const emptySlots = (): SlotBatch => ({ modelData: new Float32Array(capacity * 16), instanceCount: 0, names: [] });
@@ -89,6 +91,26 @@ function pickRay(rect: Rect, x: number, y: number, matrix: Float32Array): PickRa
 const contains = (rect: Rect, x: number, y: number): boolean =>
   rect.height > 0 && x >= rect.x && x < rect.x + rect.width && y >= rect.y && y < rect.y + rect.height;
 
+export function meldCalloutRect(board: Rect, seat: Rect, side: number, width: number, height: number,
+  visible: Rect, blocked: Rect[] = []): Rect | null {
+  const left = Math.max(board.x, visible.x) + 6, top = Math.max(board.y, visible.y) + 6;
+  const right = Math.min(board.x + board.width, visible.x + visible.width) - 6;
+  const bottom = Math.min(board.y + board.height, visible.y + visible.height) - 6;
+  if (width <= 0 || height <= 0 || width > right - left || height > bottom - top) return null;
+  const above = seat.y - height - 8, below = seat.y + seat.height + 8;
+  const across = seat.x + (seat.width - width) / 2, middle = seat.y + (seat.height - height) / 2;
+  const inward = side === 1 ? seat.x - width - 8 : seat.x + seat.width + 8;
+  const candidates = side % 2 ? [[inward, middle], [inward, above], [inward, below]]
+    : [[across, side === 0 ? above : below], [seat.x - width - 8, middle], [seat.x + seat.width + 8, middle]];
+  const overlaps = (a: Rect, b: Rect): boolean => a.x < b.x + b.width && a.x + a.width > b.x
+    && a.y < b.y + b.height && a.y + a.height > b.y;
+  for (const [x, y] of candidates) {
+    const result = { x: Math.max(left, Math.min(right - width, x)), y: Math.max(top, Math.min(bottom - height, y)), width, height };
+    if (![seat, ...blocked].some(rect => overlaps(result, rect))) return result;
+  }
+  return null;
+}
+
 export class WebglScene {
   readonly device: { version: string; renderer: string; contextAttributes: WebGLContextAttributes | null };
   readonly gl: WebGL2RenderingContext;
@@ -105,6 +127,10 @@ export class WebglScene {
   private readonly latestLabel: HTMLElement;
   private readonly latestTile: HTMLElement;
   private readonly latestCaption: HTMLElement;
+  private readonly meldLabel: HTMLElement;
+  private meldToken: string | null = null;
+  private meldReduced: boolean | null = null;
+  private meldPlacement: { space: string; rect: Rect } | null = null;
   private readonly presentation = new WebglPresentation();
   private currentVisible = new Set<string>();
   private latestEntityId: string | null = null;
@@ -168,7 +194,12 @@ export class WebglScene {
     this.latestCaption = document.createElement('span');
     this.latestCaption.className = 'webgl-latest-caption';
     this.latestLabel.append(this.latestTile, this.latestCaption);
-    this.labels.append(this.turnLabel, this.actionLabel, this.latestLabel);
+    this.meldLabel = document.createElement('span');
+    this.meldLabel.className = 'webgl-meld-callout';
+    this.meldLabel.hidden = true;
+    this.meldLabel.setAttribute('role', 'status');
+    this.meldLabel.setAttribute('aria-live', 'polite');
+    this.labels.append(this.turnLabel, this.actionLabel, this.latestLabel, this.meldLabel);
     canvas.parentElement!.append(this.labels);
     this.check();
   }
@@ -316,7 +347,8 @@ export class WebglScene {
     const sync = gl.fenceSync(gl.SYNC_GPU_COMMANDS_COMPLETE, 0);
     if (!sync) throw Error('GPU frame fence allocation failed.');
     gl.flush();
-    this.pending = { sync, commit: { frame, plan, viewport, cue, discardId, milliseconds: performance.now() - started } };
+    this.pending = { sync, commit: { frame, plan, viewport, cue, discardId, meldCallout: this.presentation.meldCallout,
+      milliseconds: performance.now() - started } };
   }
 
   private drawBatch(batch: Batch, rect: Rect, matrix: Float32Array, viewport: Viewport): void {
@@ -356,10 +388,13 @@ export class WebglScene {
     this.pending = null;
   }
 
-  resetPresentation(): void { this.presentation.clear(); this.latestLabel.hidden = this.actionLabel.hidden = true; }
+  resetPresentation(): void {
+    this.presentation.clear(); this.latestLabel.hidden = this.actionLabel.hidden = true; this.hideMeld(true);
+  }
 
   reconcile(frame: Frame): void {
     this.presentation.reconcile(frame);
+    if (!this.presentation.meldCallout) this.hideMeld(true);
     this.currentVisible = new Set(frame.entities.filter(entity => entity.appearance.showFace
       && entity.appearance.knownFace && entity.appearance.faceIndex !== null).map(entity => entity.entityId));
     if (this.latestEntityId && !this.currentVisible.has(this.latestEntityId)) {
@@ -474,10 +509,95 @@ export class WebglScene {
       node.className = `${active === seat.seat ? 'webgl-seat active' : 'webgl-seat'}${commit.cue?.sourceSeat === seat.seat ? ' played' : ''}`;
     }
     for (const [seat, node] of this.labelNodes) if (!present.has(seat)) { node.remove(); this.labelNodes.delete(seat); }
+    this.updateMeldCallout(commit);
+  }
+
+  private hideMeld(reset = false): void {
+    this.meldLabel.hidden = true;
+    if (reset) {
+      this.meldLabel.replaceChildren(); this.meldToken = null; this.meldReduced = null; this.meldPlacement = null;
+    }
+  }
+
+  private handObstacles(commit: SceneCommit): Rect[] {
+    return commit.frame.localHand.entityIds.flatMap(id => {
+      const placement = commit.plan.entities.get(id);
+      if (!placement) return [];
+      const rect = placement.separate ? commit.plan.hand : commit.plan.board;
+      const matrix = new Matrix4().fromArray(this.matrices[placement.separate ? 1 : 0])
+        .multiply(new Matrix4().fromArray(tileModel(placement.pose)));
+      const points: Vector3[] = [];
+      for (const x of [-TILE_WIDTH / 2, TILE_WIDTH / 2]) for (const y of [-TILE_HEIGHT / 2, TILE_HEIGHT / 2])
+        for (const z of [-TILE_DEPTH / 2, TILE_DEPTH / 2]) points.push(new Vector3(x, y, z).applyMatrix4(matrix));
+      const xs = points.map(point => rect.x + (point.x + 1) * rect.width / 2);
+      const ys = points.map(point => rect.y + (1 - point.y) * rect.height / 2);
+      return [{ x: Math.min(...xs) - 3, y: Math.min(...ys) - 3,
+        width: Math.max(...xs) - Math.min(...xs) + 6, height: Math.max(...ys) - Math.min(...ys) + 6 }];
+    });
+  }
+
+  private updateMeldCallout(commit: SceneCommit): void {
+    const callout = commit.meldCallout, now = performance.now();
+    if (!callout || callout !== this.presentation.meldCallout || now >= callout.until) { this.hideMeld(true); return; }
+    const seat = this.labelNodes.get(callout.seat);
+    if (!seat) { this.hideMeld(); return; }
+    const canvas = this.canvas.getBoundingClientRect(), visual = window.visualViewport;
+    const local = (rect: DOMRect): Rect =>
+      ({ x: rect.left - canvas.left, y: rect.top - canvas.top, width: rect.width, height: rect.height });
+    const visible = {
+      x: (visual?.offsetLeft ?? 0) - canvas.left, y: (visual?.offsetTop ?? 0) - canvas.top,
+      width: visual?.width ?? window.innerWidth ?? commit.viewport.widthCssPx,
+      height: visual?.height ?? window.innerHeight ?? commit.viewport.heightCssPx,
+    };
+    const showing = (node: Element): boolean => {
+      const style = getComputedStyle(node), bounds = node.getBoundingClientRect();
+      return style.display !== 'none' && style.visibility !== 'hidden' && bounds.width > 0 && bounds.height > 0;
+    };
+    if ([...document.querySelectorAll('.modal.show, dialog[open]')].some(showing)) { this.hideMeld(); return; }
+    const blocked = ['claim-window-actions', 'own-turn-actions', 'pickup-hud'].flatMap(id => {
+      const node = document.getElementById(id);
+      return node && !node.hidden && showing(node) ? [local(node.getBoundingClientRect())] : [];
+    });
+    blocked.push(...this.handObstacles(commit));
+    const token = `${commit.frame.sessionId}:${callout.key}:${callout.seat}:${callout.kind}:${callout.started}:${callout.until}`;
+    const fresh = token !== this.meldToken, wasHidden = this.meldLabel.hidden;
+    if (fresh) {
+      const word = document.createElement('span');
+      word.className = 'webgl-meld-word'; word.textContent = t(`table.callout_${callout.kind}`);
+      this.meldLabel.replaceChildren(word);
+      this.meldLabel.setAttribute('aria-label', `${['E', 'S', 'W', 'N'][callout.seat]} · ${word.textContent}`);
+      this.meldToken = token;
+    }
+    const reduced = isReducedMotionActive();
+    if (fresh || wasHidden || reduced !== this.meldReduced) {
+      this.meldLabel.style.setProperty('--meld-delay', `${-Math.max(0, now - callout.started)}ms`);
+      this.meldLabel.dataset.reduced = String(reduced); this.meldReduced = reduced;
+    }
+    this.meldLabel.style.setProperty('--meld-max-width', `${Math.max(0, Math.min(commit.plan.board.width, visible.width) - 12)}px`);
+    this.meldLabel.hidden = false;
+    const side = (callout.seat - (commit.frame.session.viewSeat ?? 0) + 4) % 4;
+    const { frame, plan, viewport } = commit, width = this.meldLabel.offsetWidth, height = this.meldLabel.offsetHeight;
+    const space = JSON.stringify([token, frame.instanceId, frame.layoutRevision,
+      frame.session.gameId, frame.session.mode, frame.session.actorSeat, frame.session.viewSeat, frame.session.viewerRevision,
+      viewport.instanceId, viewport.resizeRevision, canvas.left, canvas.top, canvas.width, canvas.height,
+      plan.board.x, plan.board.y, plan.board.width, plan.board.height,
+      visible.x, visible.y, visible.width, visible.height, width, height]);
+    // Seat text includes short-lived move cues; its changing width must not move one accepted callout.
+    let rect = this.meldPlacement?.space === space ? this.meldPlacement.rect : null;
+    if (!rect) {
+      rect = meldCalloutRect(plan.board, local(seat.getBoundingClientRect()), side, width, height, visible, blocked);
+      if (rect) this.meldPlacement = { space, rect };
+    }
+    if (!rect) { this.hideMeld(); return; }
+    const placed = rect;
+    if (blocked.some(obstacle => placed.x < obstacle.x + obstacle.width && placed.x + placed.width > obstacle.x
+      && placed.y < obstacle.y + obstacle.height && placed.y + placed.height > obstacle.y)) { this.hideMeld(); return; }
+    this.meldLabel.style.left = `${rect.x}px`; this.meldLabel.style.top = `${rect.y}px`;
   }
 
   clear(): void {
     this.presentation.clear(); this.currentVisible.clear(); this.latestEntityId = null;
+    this.hideMeld(true);
     this.cancelPending(); this.committed = null; this.picking = null;
     this.table.mesh.instanceCount = 0; this.hand.mesh.instanceCount = 0;
     this.table.targets.length = 0; this.hand.targets.length = 0;
@@ -496,7 +616,7 @@ export class WebglScene {
   dispose(): void {
     if (this.disposed) return;
     this.disposed = true; this.cancelPending(); this.committed = null; this.picking = null;
-    this.presentation.clear(); this.currentVisible.clear();
+    this.presentation.clear(); this.currentVisible.clear(); this.meldPlacement = null;
     disposeTileMesh(this.gl, this.table.mesh); disposeTileMesh(this.gl, this.hand.mesh);
     for (const texture of this.atlases) this.gl.deleteTexture(texture);
     this.gl.deleteProgram(this.program); this.labels.remove(); this.labelNodes.clear();

@@ -143,7 +143,9 @@ test('the production shell reparents the original controls without dropping thei
   h.node('new-game').disabled = true;
   const { installBrowserShell } = h.loader.load('browser-shell.ts');
   assert.equal(installBrowserShell(), true);
-  assert.deepEqual(h.node('browser-shell').children[0].children, original);
+  assert.deepEqual(h.node('browser-shell').children[0].children.slice(0, original.length), original);
+  assert.equal(h.node('table-focus-toggle').getAttribute('aria-pressed'), 'false');
+  assert.equal(h.node('table-focus-toggle').getAttribute('aria-expanded'), 'true');
   assert.equal(h.node('new-game').getAttribute('data-action'), 'new-game');
   assert.equal(h.node('new-game').disabled, true);
   h.node('new-game').disabled = false;

@@ -10,8 +10,12 @@ interface Motion {
 export interface MoveCue {
   entityId: string | null; kind: 'draw' | 'discard' | 'meld'; seat: number | null; sourceSeat: number | null; until: number;
 }
+export interface MeldCallout {
+  key: string | null; seat: number; kind: 'pung' | 'chow' | 'kong' | 'meld'; started: number; until: number;
+}
+interface MeldSummary { seat: number | null; members: string; kind: MeldCallout['kind'] }
 const playPhases = new Set(['AwaitingDiscard', 'AwaitingClaim', 'DeclaringKong', 'DrawingReplacement']);
-const duration = 240;
+const duration = 320;
 const copy = (pose: RenderPose): RenderPose =>
   ({ position: pose.position.clone(), rotation: pose.rotation.clone(), scale: pose.scale });
 const visible = (entity: Entity): boolean => entity.kind === 'TILE' && entity.appearance.knownFace
@@ -19,6 +23,40 @@ const visible = (entity: Entity): boolean => entity.kind === 'TILE' && entity.ap
 const publicMove = (entity: Entity): boolean => visible(entity) && (entity.group === 'discard' || entity.group === 'meld');
 const same = (a: RenderPose, b: RenderPose): boolean => a.position.distanceToSquared(b.position) < 1e-10
   && Math.abs(a.rotation.dot(b.rotation)) > 1 - 1e-8 && Math.abs(a.scale - b.scale) < 1e-6;
+
+function acceptedMelds(frame: Frame): Map<string, MeldSummary> {
+  const summaries = new Map<string, MeldSummary>();
+  // Relay layouts are freely arranged and cannot prove an accepted rule action.
+  if (!frame.session.snapshotReady || frame.session.mode !== 'changsha'
+    || frame.match?.conditions.gameType !== 'CHANGSHA') return summaries;
+  const groups = new Map<string, Entity[]>();
+  for (const entity of frame.entities) if (entity.kind === 'TILE' && entity.group === 'meld') {
+    const key = `${entity.seat ?? '?'}:${Number.isSafeInteger(entity.indexes[0]) ? entity.indexes[0] : '?'}`;
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key)!.push(entity);
+  }
+  for (const [key, entities] of groups) {
+    if (entities.some(entity => entity.display.held || entity.display.temporary)) continue;
+    const seat = entities[0].seat;
+    const positions = entities.map(entity => entity.indexes[1]).sort((a, b) => a - b);
+    const members = positions.map(position => Number.isSafeInteger(position) ? position : '?').join(',');
+    const canonical = entities.every(entity => entity.indexes.length === 2 && Number.isSafeInteger(entity.indexes[0])
+      && entity.indexes[0] >= 0 && entity.indexes[0] < 4);
+    const faces = entities.filter(visible).map(entity => entity.appearance.faceIndex!);
+    let kind: MeldCallout['kind'] = 'meld';
+    if (canonical && (members === '0,1,2,3' || members === '0,1,2,4')
+      && new Set(faces).size <= 1) kind = 'kong';
+    else if (canonical && members === '0,1,2' && faces.length === 3) {
+      faces.sort((a, b) => a - b);
+      if (faces[0] === faces[2]) kind = 'pung';
+      else if (faces[0] >= 0 && faces[2] < 27 && Math.floor(faces[0] / 9) === Math.floor(faces[2] / 9)
+        && faces[1] === faces[0] + 1 && faces[2] === faces[1] + 1) kind = 'chow';
+    }
+    // Faces and physical/hidden IDs are deliberately absent from the retained summary.
+    summaries.set(key, { seat, members, kind });
+  }
+  return summaries;
+}
 
 /** Only current opaque IDs and poses are retained: never faces, retired tiles or an action queue. */
 export class WebglPresentation {
@@ -29,11 +67,15 @@ export class WebglPresentation {
   private handCounts = new Map<number, number>();
   private phase: string | null = null;
   private reduced = false;
+  private melds = new Map<string, MeldSummary>();
+  private callout: MeldCallout | null = null;
 
   get latestDiscardId(): string | null { return this.discard; }
+  get meldCallout(): MeldCallout | null { return this.callout; }
 
   clear(): void {
     this.motions.clear(); this.space = ''; this.cue = null; this.discard = null; this.handCounts.clear(); this.phase = null;
+    this.melds.clear(); this.callout = null;
   }
 
   reconcile(frame: Frame): void {
@@ -47,6 +89,12 @@ export class WebglPresentation {
     if (this.cue?.entityId && (!current || !publicMove(current))) this.cue = null;
     const discarded = this.discard ? entitled.get(this.discard) : null;
     if (!discarded || discarded.group !== 'discard' || !visible(discarded)) this.discard = null;
+    if (this.callout) {
+      const current = acceptedMelds(frame);
+      const summary = this.callout.key ? current.get(this.callout.key) : null;
+      if (this.callout.key ? !summary || summary.kind !== this.callout.kind
+        : ![...current.values()].some(group => group.seat === this.callout!.seat)) this.callout = null;
+    }
   }
 
   apply(plan: WebglPlan, frame: Frame, viewport: Viewport, now = performance.now(),
@@ -59,6 +107,18 @@ export class WebglPresentation {
     if (snap) { this.clear(); this.space = space; }
     this.reconcile(frame);
     if (this.cue && now >= this.cue.until) this.cue = null;
+    if (this.callout && now >= this.callout.until) this.callout = null;
+    const accepted = acceptedMelds(frame);
+    const changedMelds = [...accepted].filter(([key, group]) => this.melds.get(key)?.members !== group.members);
+    if (!snap && changedMelds.length) {
+      const actors = new Set(changedMelds.map(([, group]) => group.seat));
+      const actor = changedMelds[0][1].seat;
+      this.callout = actors.size === 1 && actor !== null && actor >= 0 && actor < 4 ? {
+        key: changedMelds.length === 1 ? changedMelds[0][0] : null, seat: actor,
+        kind: changedMelds.length === 1 ? changedMelds[0][1].kind : 'meld', started: now, until: now + 1050,
+      } : null;
+    }
+    this.melds = accepted;
     const discards: MoveCue[] = [], melds: Array<MoveCue & { fromDiscard: boolean }> = [];
     const counts = new Map<number, number>();
     for (const entity of frame.entities) if (entity.group === 'hand' && entity.seat !== null) {

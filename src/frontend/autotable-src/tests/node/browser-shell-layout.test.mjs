@@ -13,7 +13,7 @@ function productionModules() {
   return buildSync({
     absWorkingDir: root, bundle: true, write: false, format: 'iife', platform: 'browser',
     target: 'es2022', loader: { '.css': 'empty' }, logLevel: 'silent',
-    define: { 'import.meta.url': JSON.stringify(new URL('../../src/renderer/webgl-scene.ts', import.meta.url).href) },
+    define: { 'import.meta.url': JSON.stringify('http://shell-focus.fixture/src/ui/tile-face.ts') },
     stdin: {
       resolveDir: root,
       contents: `
@@ -38,6 +38,7 @@ const styles = [
   'node_modules/bootstrap/dist/css/bootstrap.css', 'src/style.css', 'src/main.css',
   'src/ui/hicks-mobile-sidebar.css', 'src/browser-shell.css', 'src/mobile-table.css',
   'src/renderer/renderer-host.css', 'src/ui/rule-action-controls.css', 'src/ui/claim-window-overlay.css',
+  'src/ui/tile-face.css', 'src/ui/claim-preview.css',
 ].map(file => fs.readFileSync(path.join(root, file), 'utf8')).join('\n');
 
 async function measure(page) {
@@ -84,10 +85,12 @@ function overlap(a, b) {
   return a.left < b.right - 1 && a.right > b.left + 1 && a.top < b.bottom - 1 && a.bottom > b.top + 1;
 }
 
-function assertLayout(result, state) {
+function assertLayout(result, state, native = false) {
   const at = `${result.width}×${result.height} ${state}`;
   assert(result.docWidth <= result.width, `${at}: document overflow ${result.docWidth}`);
-  assert.equal(result.markers, 0, 'a source-only measurement must never claim native readiness');
+  assert.equal(result.markers, native ? 2 : 0, native
+    ? 'the mounted fixture must have genuine GPU-completion markers'
+    : 'a source-only measurement must never claim native readiness');
   assert(result.clear.top >= result.shell.bottom - 1,
     `${at}: host did not reserve the header: ${JSON.stringify({ shell: result.shell, main: result.main, style: result.mainStyle, viewport: result.viewport })}`);
   assert(result.variant.scrollWidth <= result.variant.clientWidth + 1, `${at}: variant is truncated`);
@@ -117,6 +120,78 @@ function assertLayout(result, state) {
   }
   assert(result.clear.right - result.clear.left >= 280, `${at}: table's clear width is unusable`);
   assert(result.clear.bottom - result.clear.top - result.viewport.handBandCssPx >= 120, `${at}: no clear board above hand`);
+}
+
+async function focusPage(page, bundle, saved = false) {
+  await page.route('http://shell-focus.fixture/**', route => {
+    const url = new URL(route.request().url()), asset = /^\/art\/tiles\/(Faces(?:Labelled)?\.png)$/.exec(url.pathname);
+    if (asset) return route.fulfill({ contentType: 'image/png', body: fs.readFileSync(path.join(root, 'art/tiles', asset[1])) });
+    if (url.pathname === '/') return route.fulfill({ contentType: 'text/html', body: markup.replace('</head>', `<style>${styles}</style></head>`) });
+    return route.abort();
+  });
+  await page.goto('http://shell-focus.fixture/');
+  await page.addScriptTag({ content: bundle });
+  await page.evaluate(saved => {
+    if (saved !== null) localStorage.setItem('mahjong.table.focus.v1', String(saved));
+    if (!localStorage.getItem('mahjong.settings.v1')) localStorage.setItem('mahjong.settings.v1',
+      JSON.stringify({ boardLayout: 'rectangular', handLayout: 'separate', cameraMode: 'flat', lang: 'en' }));
+    document.body.className = 'variant-changsha theme-light';
+    document.getElementById('chat-panel').hidden = false;
+    document.getElementById('bot-banner').hidden = false;
+    document.getElementById('bot-banner').innerHTML = '<div class="bot-banner-summary">1 human · 3 bots</div>';
+    new window.shellSource['move-log.ts'].MoveLog({});
+    document.getElementById('leave-seat').addEventListener('click', () => { window.focusLeaveClicks = (window.focusLeaveClicks ?? 0) + 1; });
+    window.shellSource['browser-shell.ts'].installBrowserShell();
+    let host = null, layout = null, frameId = 0;
+    const publish = () => {
+      if (!host || !layout) return;
+      host.publish(layout, {
+        contractVersion: '1.0.0', instanceId: host.instanceId, sessionId: 'focus-fixture',
+        type: 'frame', frameId: ++frameId, layoutRevision: 1,
+        session: { gameId: null, mode: 'offline', connected: false, snapshotReady: false, actorSeat: null, viewSeat: 0, viewerRevision: null },
+        presentation: { viewMode: 'flat', boardLayout: 'rectangular', handLayout: 'separate', tileLabels: true, lookDown: 0, zoom: 0 },
+        entities: [], seats: [], localHand: { seat: null, entityIds: [], drawnEntityId: null }, turn: null, pickup: null, dice: null, match: null,
+      });
+    };
+    const { WebglHost } = window.shellSource['renderer/webgl-host.ts'];
+    host = new WebglHost(document.getElementById('main'), {
+      action() { throw Error('A panel toggle must not submit gameplay'); }, resized: publish, resumed: publish, failure() {}, notice() {},
+    });
+    host.clear('focus-fixture', 'join');
+    layout = { contractVersion: '1.0.0', instanceId: host.instanceId, sessionId: 'focus-fixture', type: 'layout', layoutRevision: 1,
+      gameType: 'CHANGSHA', activeSeats: [0, 1, 2, 3], canonicalBoard: { width: 174, depth: 174 }, slots: [] };
+    window.shellHost = host;
+    host.setPresentation({ handLayout: 'separate' }); publish(); void host.mount();
+  }, saved);
+  await focusSettled(page);
+}
+
+async function focusSettled(page) {
+  await measure(page);
+  await page.waitForFunction(() => {
+    const host = window.shellHost, commit = host.scene?.committed;
+    return host.state === 'ready' && commit?.viewport.resizeRevision === host.viewport.resizeRevision && !host.inFlight;
+  });
+}
+
+async function focusGeometry(page) {
+  await focusSettled(page);
+  return page.evaluate(() => {
+    const host = window.shellHost, view = host.viewport, commit = host.scene.committed;
+    const visible = id => {
+      const element = document.getElementById(id), bounds = element.getBoundingClientRect();
+      return !element.hidden && getComputedStyle(element).display !== 'none' && bounds.width > 0 && bounds.height > 0;
+    };
+    return {
+      mainAvailable: document.getElementById('main').getBoundingClientRect().width - view.insetsCssPx.left - view.insetsCssPx.right,
+      canvasAvailable: host.canvas.getBoundingClientRect().width - view.insetsCssPx.left - view.insetsCssPx.right,
+      boardWidth: commit.plan.board.width, right: view.insetsCssPx.right, revision: view.resizeRevision,
+      committedRevision: commit.viewport.resizeRevision, presentation: commit.frame.presentation,
+      savedSettings: localStorage.getItem('mahjong.settings.v1'),
+      roster: visible('bot-banner'), log: visible('move-log'), sidebar: visible('sidebar'),
+      focus: visible('table-focus-toggle'),
+    };
+  });
 }
 
 test('production shell + WebglHost reserve unobstructed controls, panels and hand space at phone, landscape and desktop sizes', async t => {
@@ -341,4 +416,85 @@ test('production shell + WebglHost reserve unobstructed controls, panels and han
       }
     });
   }
+  await t.test('saved desktop focus reclaims the actual canvas region and GPU-committed board plan, then restores original controls', async () => {
+    const context = await browser.newContext({ viewport: { width: 1280, height: 800 }, reducedMotion: 'reduce' });
+    const page = await context.newPage();
+    try {
+      await focusPage(page, bundle);
+      const before = await focusGeometry(page);
+      assert(before.roster && before.log && before.sidebar);
+      await page.locator('#table-focus-toggle').focus(); await page.keyboard.press('Enter');
+      const focused = await focusGeometry(page);
+      for (const field of ['mainAvailable', 'canvasAvailable', 'boardWidth']) assert(focused[field] - before[field] >= 300, field);
+      assert.equal(focused.right, 0); assert(!focused.roster && !focused.log && !focused.sidebar);
+      t.diagnostic(`Focus-table actual GPU plan: ${before.boardWidth} → ${focused.boardWidth} CSS px; right inset ${before.right} → ${focused.right}.`);
+      assert.equal(focused.committedRevision, focused.revision);
+      assert(focused.revision > before.revision);
+      assert.deepEqual(focused.presentation, before.presentation);
+      assert.equal(focused.savedSettings, before.savedSettings, 'view/hand/layout settings must not be rewritten');
+      assert.equal(await page.locator('#table-focus-toggle').getAttribute('aria-pressed'), 'true');
+      assert.equal(await page.locator('#table-focus-toggle').getAttribute('aria-expanded'), 'false');
+      if (process.env.BROWSER_FOCUS_SCREENSHOT) {
+        const directory = path.resolve(root, '../../../artifacts/focus-table');
+        fs.mkdirSync(directory, { recursive: true }); await page.screenshot({ path: path.join(directory, 'expanded-table.png') });
+      }
+      await page.evaluate(() => window.shellHost.dispose());
+      await focusPage(page, bundle, null);
+      const saved = await focusGeometry(page);
+      assert.equal(saved.right, 0); assert.equal(saved.boardWidth, focused.boardWidth);
+      await page.locator('#table-focus-toggle').click();
+      const restored = await focusGeometry(page);
+      assert.equal(restored.boardWidth, before.boardWidth);
+      assert(restored.roster && restored.log && restored.sidebar);
+      await page.locator('#leave-seat').click();
+      assert.equal(await page.evaluate(() => window.focusLeaveClicks), 1, 'the restored original seat-leave handler remains usable');
+    } finally { await page.evaluate(() => window.shellHost?.dispose()); await context.close(); }
+  });
+  await t.test('collapsed auxiliary panels never hide or reset the current claim controls and server deadline', async () => {
+    const context = await browser.newContext({ viewport: { width: 1280, height: 800 }, reducedMotion: 'reduce' });
+    const page = await context.newPage();
+    try {
+      await focusPage(page, bundle);
+      const deadline = await page.evaluate(() => {
+        const overlay = new window.shellSource['ui/claim-window-overlay.ts'].ClaimWindowOverlay({});
+        overlay.root = overlay.buildDom();
+        document.getElementById('browser-action-slot').appendChild(overlay.root);
+        window.focusClaimCalls = [];
+        overlay.actions = { requestClaim: intent => window.focusClaimCalls.push(intent) };
+        overlay.activeClaim = { available: ['Pung'], deadline: Date.now() + 8000, tile: 6, source: 2 };
+        overlay.refresh(); window.focusClaimOverlay = overlay;
+        return overlay.activeClaim.deadline;
+      });
+      await page.locator('#table-focus-toggle').click(); await focusSettled(page);
+      assert.equal(await page.locator('#claim-window-actions').isVisible(), true);
+      assert.equal(await page.locator('.ferro-claim-badge-pung').isEnabled(), true);
+      assert.equal(await page.evaluate(() => window.focusClaimOverlay.activeClaim.deadline), deadline);
+      const remaining = await page.locator('.ferro-claim-timer-value').innerText();
+      assert(Number(remaining) > 5 && Number(remaining) <= 8);
+      await page.locator('.ferro-claim-badge-pung').click();
+      assert.deepEqual(await page.evaluate(() => window.focusClaimCalls), ['Pung']);
+      for (const id of ['new-game', 'lobby-toggle', 'settings-toggle', 'settings-button', 'chat-toggle', 'table-focus-toggle'])
+        assert.equal(await page.locator(`#${id}`).isVisible(), true, id);
+    } finally { await page.evaluate(() => { window.focusClaimOverlay?.detach(); window.shellHost?.dispose(); }); await context.close(); }
+  });
+  await t.test('compact layouts keep their original toolbar and overlay controls; desktop focus never hides relay Deal', async () => {
+    const context = await browser.newContext({ viewport: { width: 390, height: 844 }, reducedMotion: 'reduce' });
+    const page = await context.newPage();
+    try {
+      await focusPage(page, bundle, true);
+      assert.equal(await page.locator('#table-focus-toggle').isVisible(), false, 'no extra compact-toolbar cell');
+      await page.evaluate(() => document.body.classList.add('move-log-open'));
+      assert.equal(await page.locator('#move-log').isVisible(), true, 'compact overlay controls remain authoritative');
+      assertLayout(await measure(page), 'compact saved desktop focus', true);
+      await page.setViewportSize({ width: 1280, height: 800 });
+      const desktop = await focusGeometry(page);
+      assert.equal(desktop.right, 0); assert.equal(desktop.focus, true);
+      await page.evaluate(() => {
+        document.body.classList.remove('variant-changsha'); document.body.classList.add('variant-riichi');
+        document.getElementById('deal').addEventListener('click', () => { window.focusDealClicks = (window.focusDealClicks ?? 0) + 1; });
+      });
+      await page.locator('#deal').click();
+      assert.equal(await page.evaluate(() => window.focusDealClicks), 1, 'relay manual controls are not auxiliary panels');
+    } finally { await page.evaluate(() => window.shellHost?.dispose()); await context.close(); }
+  });
 });
