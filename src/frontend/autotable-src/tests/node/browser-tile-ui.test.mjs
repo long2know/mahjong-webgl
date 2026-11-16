@@ -55,6 +55,8 @@ async function loaded(page, selector) {
 }
 
 test('real browser paints licensed grouped winning tiles and exact legal claim alternatives at portrait, landscape and desktop sizes', async t => {
+  const executablePath = process.env.CHROMIUM_EXECUTABLE_PATH;
+  if (executablePath !== undefined) assert(fs.existsSync(executablePath), 'CHROMIUM_EXECUTABLE_PATH must point to an installed browser');
   const runtime = path.resolve(root, `../../../.work/tile-ui-browser-${process.pid}`);
   fs.mkdirSync(runtime, { recursive: true });
   const previous = process.env.TMPDIR; process.env.TMPDIR = runtime;
@@ -64,7 +66,7 @@ test('real browser paints licensed grouped winning tiles and exact legal claim a
     if (previous === undefined) delete process.env.TMPDIR; else process.env.TMPDIR = previous;
     fs.rmSync(runtime, { recursive: true, force: true });
   });
-  browser = await chromium.launch({ headless: true, timeout: 15000,
+  browser = await chromium.launch({ ...(executablePath === undefined ? {} : { executablePath }), headless: true, timeout: 15000,
     args: ['--no-sandbox', '--disable-dev-shm-usage', '--disable-breakpad'],
     env: { ...process.env, HOME: runtime, XDG_CACHE_HOME: runtime, XDG_CONFIG_HOME: runtime } });
   const bundle = await modules();

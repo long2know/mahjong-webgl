@@ -86,6 +86,8 @@ const retained = (result, stage) => {
 };
 
 test('production host retains actual WebGL pixels through controlled blur/resize and repaints on visible resume without a click', async t => {
+  const executablePath = process.env.CHROMIUM_EXECUTABLE_PATH;
+  if (executablePath !== undefined) assert(fs.existsSync(executablePath), 'CHROMIUM_EXECUTABLE_PATH must point to an installed browser');
   const runtime = path.resolve(root, `../../../.work/lifecycle-browser-${process.pid}`);
   fs.mkdirSync(runtime, { recursive: true });
   const previous = process.env.TMPDIR;
@@ -96,7 +98,7 @@ test('production host retains actual WebGL pixels through controlled blur/resize
     if (previous === undefined) delete process.env.TMPDIR; else process.env.TMPDIR = previous;
     fs.rmSync(runtime, { recursive: true, force: true });
   });
-  browser = await chromium.launch({ headless: true, timeout: 15000,
+  browser = await chromium.launch({ ...(executablePath === undefined ? {} : { executablePath }), headless: true, timeout: 15000,
     args: ['--no-sandbox', '--disable-dev-shm-usage', '--disable-breakpad'],
     env: { ...process.env, HOME: runtime, XDG_CACHE_HOME: runtime, XDG_CONFIG_HOME: runtime } });
   const page = await browser.newPage({ viewport: { width: 640, height: 480 }, deviceScaleFactor: 1 });
