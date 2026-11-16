@@ -88,7 +88,7 @@ const retained = (result, stage) => {
 test('production host retains actual WebGL pixels through controlled blur/resize and repaints on visible resume without a click', async t => {
   const executablePath = process.env.CHROMIUM_EXECUTABLE_PATH;
   if (executablePath !== undefined) assert(fs.existsSync(executablePath), 'CHROMIUM_EXECUTABLE_PATH must point to an installed browser');
-  const runtime = path.resolve(root, `../../../.work/lifecycle-browser-${process.pid}`);
+  const runtime = path.resolve(root, `../../../.work/g${process.pid}`);
   fs.mkdirSync(runtime, { recursive: true });
   const previous = process.env.TMPDIR;
   process.env.TMPDIR = runtime;

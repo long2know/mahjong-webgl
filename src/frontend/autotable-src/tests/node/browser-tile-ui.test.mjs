@@ -57,7 +57,7 @@ async function loaded(page, selector) {
 test('real browser paints licensed grouped winning tiles and exact legal claim alternatives at portrait, landscape and desktop sizes', async t => {
   const executablePath = process.env.CHROMIUM_EXECUTABLE_PATH;
   if (executablePath !== undefined) assert(fs.existsSync(executablePath), 'CHROMIUM_EXECUTABLE_PATH must point to an installed browser');
-  const runtime = path.resolve(root, `../../../.work/tile-ui-browser-${process.pid}`);
+  const runtime = path.resolve(root, `../../../.work/u${process.pid}`);
   fs.mkdirSync(runtime, { recursive: true });
   const previous = process.env.TMPDIR; process.env.TMPDIR = runtime;
   let browser;
