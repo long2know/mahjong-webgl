@@ -3,6 +3,7 @@ import { mkdirSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { newActor, applyRoom, closeLobby, dismissPrompts, probe, driveManualCeremony } from './_lobby-repair';
 import { mobileGeometry, setHandOrder, waitForBoardHand } from './_mobile-geometry';
+import { expandLobbyAdvanced } from './_helpers';
 
 type Frame = { type?: string; entries?: Array<[string, string | number, { slotName?: string; tileId?: number } | null]> };
 type Bounds = { left: number; top: number; right: number; bottom: number };
@@ -16,6 +17,7 @@ function saveEvidence(filename: string, value: unknown): void {
 }
 
 async function oneHand(page: Page): Promise<void> {
+  await expandLobbyAdvanced(page);
   // Card radios are visually hidden; click their real visible label, not a forced input.
   await page.locator('#lobby-hand-count-fieldset label:has(input[value="1"])').click();
   await expect(page.locator('input[name="lobby-hand-count"][value="1"]')).toBeChecked();
@@ -148,7 +150,7 @@ test(`${viewport.width}x${viewport.height} ${mode} sorting persists and a real b
   try {
     const actor = await newActor(browser, baseURL, testInfo, 'mobile-sort-tap', context);
     await oneHand(actor.page);
-    await actor.page.locator('#lobby-advanced summary').click();
+    await expandLobbyAdvanced(actor.page);
     await actor.page.locator('#lobby-seed').fill('4100');
     actor.page.on('websocket', socket => {
       socket.on('framesent', e => { try { sent.push(JSON.parse(String(e.payload)) as Frame); } catch { /* non-JSON */ } });
@@ -306,7 +308,7 @@ for (const viewport of [
       const actor = await newActor(browser, baseURL, testInfo, 'mobile-view-settings', context);
       const page = actor.page;
       await oneHand(page);
-      await page.locator('#lobby-advanced summary').click();
+      await expandLobbyAdvanced(page);
       await page.locator('#lobby-seed').fill('4100');
       await applyRoom(actor, 3, 0, 'auto');
       await closeLobby(actor);

@@ -7,10 +7,10 @@ namespace Mahjong.Autotable.Api.Changsha.Runtime;
 public sealed class ChangshaRuntimeOptions
 {
     /// <summary>Delay before a bot acts on its own turn (after TurnStarted).</summary>
-    public int BotTurnDelayMs { get; set; } = 350;
+    public int BotTurnDelayMs { get; set; } = 1000;
 
     /// <summary>Delay before a bot responds during a claim window.</summary>
-    public int BotClaimDelayMs { get; set; } = 250;
+    public int BotClaimDelayMs { get; set; } = 650;
 
     /// <summary>
     /// Phase F §3 — delay before a bot takes its wall tiles during a manual-deal

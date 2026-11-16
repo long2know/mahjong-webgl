@@ -265,6 +265,7 @@ function hostFixture() {
     location: new URL('http://localhost/autotable/'), WebGL2RenderingContext: class {}, matchMedia: () => new EventTarget() });
   const jobs = new Map(), draws = [], receipts = [];
   let now = 0, counter = 0, canFinish = false, disposed = 0, failures = 0;
+  const presentationResets = [], reconciled = [];
   const scene = {
     committed: null, pending: null, drawCount: 0, pan: [0, 0],
     draw(layout, frame, viewport) {
@@ -276,6 +277,7 @@ function hostFixture() {
       this.committed = this.pending; this.pending = null; return this.committed;
     },
     cancelPending() { this.pending = null; }, clear() { this.pending = this.committed = null; },
+    resetPresentation() { presentationResets.push(now); }, reconcile(frame) { reconciled.push(frame.frameId); },
     dispose() { disposed++; },
   };
   class Observer { observe() {} disconnect() {} }
@@ -302,7 +304,7 @@ function hostFixture() {
     now += milliseconds;
     const callbacks = [...jobs.values()]; jobs.clear(); callbacks.forEach(callback => callback(now));
   };
-  return { host, layout, frame, tick, window, document, scene, draws, receipts, jobs,
+  return { host, layout, frame, tick, window, document, scene, draws, receipts, jobs, presentationResets, reconciled,
     finish: () => { canFinish = true; }, disposed: () => disposed, failures: () => failures };
 }
 
@@ -359,6 +361,7 @@ test('WebGL host acknowledges only a completed GPU frame and coalesces to the ne
   assert.equal(f.host.state, 'awaiting-ready');
   assert.deepEqual(f.receipts, [], 'parsing/drawing without the GPU fence must not acknowledge readiness');
   f.host.publish(f.layout, f.frame(2)); f.host.publish(f.layout, f.frame(3));
+  assert.deepEqual(f.reconciled, [2, 3], 'even superseded pending publications immediately retire presentation entitlements');
   assert.equal(f.host.queue.frame.frameId, 3);
   assert.deepEqual(f.draws, [1]);
   f.finish(); f.tick(); f.tick();
@@ -375,12 +378,15 @@ test('unfocused publication stays bounded, resumes newest frame and disposal sto
   const f = hostFixture(); f.finish(); await f.host.mount();
   f.host.publish(f.layout, f.frame(1)); f.tick(); f.tick();
   f.document.focused = false; f.window.dispatchEvent(new Event('blur'));
+  const resets = f.presentationResets.length;
+  assert(resets > 0, 'backgrounding must drop presentation travel, not replay it on resume');
   for (let id = 2; id < 500; id++) f.host.publish(f.layout, f.frame(id));
   f.tick();
   assert.deepEqual(f.draws, [1]);
   assert.equal(f.host.queue.frame.frameId, 499);
   assert.equal(f.jobs.size, 0);
   f.document.focused = true; f.window.dispatchEvent(new Event('focus')); f.tick(); f.tick();
+  assert(f.presentationResets.length > resets, 'resume/remeasure snaps the newest layout before accepting fresh input');
   assert.equal(f.receipts.at(-1).receipt.frameId, 499);
   await f.host.dispose(); f.tick();
   assert.equal(f.disposed(), 1);

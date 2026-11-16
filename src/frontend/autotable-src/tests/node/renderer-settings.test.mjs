@@ -265,6 +265,8 @@ test('actual Game presentation and registered keyboard callers preserve layouts 
   fixture.world.conditions.gameType = h.GameType.CHANGSHA;
   assert.equal(fixture.presentation({ ...SETTINGS_DEFAULT, cameraMode: 'auto', boardLayout: 'auto', handLayout: 'auto' }).boardLayout,
     'rectangular', 'desktop Changsha also uses compact public lanes');
+  assert.equal(fixture.presentation({ ...SETTINGS_DEFAULT, cameraMode: 'auto', boardLayout: 'auto', handLayout: 'auto' }).handLayout,
+    'separate', 'automatic Changsha keeps a stable generous hand on desktop as well as phones');
   fixture.width = 844;
   fixture.height = 390;
   assert.equal(fixture.presentation({ ...SETTINGS_DEFAULT, cameraMode: 'auto', boardLayout: 'auto', handLayout: 'auto' }).handLayout,

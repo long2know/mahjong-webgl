@@ -8,6 +8,13 @@ import { invertMatrix4, pickTile, type PickRay } from './gpu/picking';
 import type { Frame, Layout, Viewport } from './renderer-contract';
 import { buildWebglPlan, fittedCamera, tileModel, type Rect, type RenderPose, type WebglPlan } from './webgl-layout';
 import { pickableModels, tileMaterialId, tileSurface } from './webgl-style';
+import { WebglPresentation, type MoveCue } from './webgl-presentation';
+import { t } from '../i18n';
+
+const faceAtlases = [
+  new URL('../../art/tiles/Faces.png', import.meta.url).href,
+  new URL('../../art/tiles/FacesLabelled.png', import.meta.url).href,
+];
 
 const fragment = `#version 300 es
 precision highp float;
@@ -44,13 +51,19 @@ void main() {
     return;
   }
   bool plastic = row < 40.0 || (row >= 45.0 && row <= 57.0);
+  if (row == 40.0 || row == 62.0) {
+    float grain = fract(sin(dot(localUv, vec2(127.1,311.7)))*43758.5453);
+    base.rgb *= 0.975+0.035*grain+0.025*(1.0-length(localUv-0.5));
+  }
   fragColor = vec4(plastic ? base.rgb*v_lighting.x+vec3(v_lighting.y) : base.rgb,1.0);
 }`;
 interface Target { kind: 'entity' | 'dice'; id: string | null }
 interface Batch { mesh: TileMesh; targets: Array<Target | null> }
 interface SlotBatch { modelData: Float32Array; instanceCount: number; names: string[] }
 interface PickBatch { modelData: Float32Array; instanceCount: number; targets: Array<Target | null> }
-export interface SceneCommit { frame: Frame; plan: WebglPlan; viewport: Viewport; milliseconds: number }
+export interface SceneCommit {
+  frame: Frame; plan: WebglPlan; viewport: Viewport; milliseconds: number; cue: MoveCue | null; discardId: string | null;
+}
 const capacity = 4096;
 const emptySlots = (): SlotBatch => ({ modelData: new Float32Array(capacity * 16), instanceCount: 0, names: [] });
 const solidPose = (x: number, y: number, z: number, sx: number, sy: number, sz: number): Float32Array => {
@@ -87,6 +100,14 @@ export class WebglScene {
   private readonly handSlots = emptySlots();
   private readonly labels: HTMLElement;
   private readonly labelNodes = new Map<number, HTMLElement>();
+  private readonly turnLabel: HTMLElement;
+  private readonly actionLabel: HTMLElement;
+  private readonly latestLabel: HTMLElement;
+  private readonly latestTile: HTMLElement;
+  private readonly latestCaption: HTMLElement;
+  private readonly presentation = new WebglPresentation();
+  private currentVisible = new Set<string>();
+  private latestEntityId: string | null = null;
   private matrices: [Float32Array, Float32Array] = [new Float32Array(16), new Float32Array(16)];
   private picking: { table: PickBatch; hand: PickBatch; tableSlots: SlotBatch; handSlots: SlotBatch;
     matrices: [Float32Array, Float32Array] } | null = null;
@@ -99,11 +120,7 @@ export class WebglScene {
   private disposed = false;
 
   static async create(canvas: HTMLCanvasElement): Promise<WebglScene> {
-    const urls = [
-      new URL('../../art/tiles/Faces.png', import.meta.url).href,
-      new URL('../../art/tiles/FacesLabelled.png', import.meta.url).href,
-    ];
-    const images = await Promise.all(urls.map(url => new Promise<HTMLImageElement>((resolve, reject) => {
+    const images = await Promise.all(faceAtlases.map(url => new Promise<HTMLImageElement>((resolve, reject) => {
       const image = new Image();
       image.onload = () => resolve(image);
       image.onerror = () => reject(Error('Required owned tile artwork could not load; no placeholder atlas was substituted.'));
@@ -129,11 +146,29 @@ export class WebglScene {
     const geometry = beveledTileGeometry();
     this.table = { mesh: createTileMesh(gl, this.program, capacity, geometry), targets: [] };
     this.hand = { mesh: createTileMesh(gl, this.program, capacity, geometry), targets: [] };
-    this.style = { version: 'ivory-bevel-teal-rivers-v1', verticesPerInstance: geometry.positions.length / 3,
+    this.style = { version: 'ivory-teal-landscape-v2', verticesPerInstance: geometry.positions.length / 3,
       trianglesPerInstance: geometry.indices.length / 3, riverCount: 0, renderedInstances: 0, submittedTriangles: 0, frameDrawCalls: 0 };
     this.labels = document.createElement('div');
     this.labels.className = 'webgl-labels';
-    this.labels.setAttribute('aria-label', 'Public seat scores');
+    this.labels.setAttribute('aria-label', 'Table turn and public moves');
+    this.turnLabel = document.createElement('span');
+    this.turnLabel.className = 'webgl-turn';
+    this.turnLabel.hidden = true;
+    this.actionLabel = document.createElement('span');
+    this.actionLabel.className = 'webgl-action';
+    this.actionLabel.hidden = true;
+    this.latestLabel = document.createElement('div');
+    this.latestLabel.className = 'webgl-latest';
+    this.latestLabel.hidden = true;
+    this.latestLabel.setAttribute('role', 'status');
+    this.latestLabel.setAttribute('aria-live', 'polite');
+    this.latestTile = document.createElement('span');
+    this.latestTile.className = 'webgl-latest-tile';
+    this.latestTile.setAttribute('aria-hidden', 'true');
+    this.latestCaption = document.createElement('span');
+    this.latestCaption.className = 'webgl-latest-caption';
+    this.latestLabel.append(this.latestTile, this.latestCaption);
+    this.labels.append(this.turnLabel, this.actionLabel, this.latestLabel);
     canvas.parentElement!.append(this.labels);
     this.check();
   }
@@ -144,9 +179,9 @@ export class WebglScene {
     const context = canvas.getContext('2d');
     if (!context) throw Error('Tile texture composition is unavailable.');
     const colors: Record<number, string> = {
-      37: '#216c76', 38: '#ad7639', 39: '#f7f3e6', 40: '#0d5748', 41: '#573c2b',
-      42: '#ffd36e', 43: '#60d9da', 44: '#a43e44', 58: '#205d53', 59: '#c4aa57', 60: '#12372f',
-      62: '#175c4e', 63: '#336b59',
+      37: '#216c76', 38: '#ad7639', 39: '#f7f3e6', 40: '#176a6a', 41: '#103d45',
+      42: '#ffd36e', 43: '#60d9da', 44: '#a43e44', 58: '#205d53', 59: '#c4aa57', 60: '#0b4046',
+      62: '#176363', 63: '#3a8581',
     };
     for (let row = 0; row < 64; row++) for (let side = 0; side < 3; side++) {
       const x = ((row % 8) * 3 + side) * 64, y = Math.floor(row / 8) * 96;
@@ -194,7 +229,10 @@ export class WebglScene {
   draw(layout: Layout, frame: Frame, viewport: Viewport): void {
     if (this.disposed || this.pending) throw Error('Overlapping or disposed WebGL publication.');
     const started = performance.now(), gl = this.gl;
+    this.reconcile(frame);
     const plan = buildWebglPlan(layout, frame, viewport);
+    const cue = this.presentation.apply(plan, frame, viewport, started);
+    const discardId = this.presentation.latestDiscardId;
     this.matrices = [fittedCamera(plan, frame, false, this.pan), fittedCamera(plan, frame, true)];
     for (const batch of [this.table, this.hand]) { batch.mesh.instanceCount = 0; batch.targets.length = 0; }
     for (const batch of [this.tableSlots, this.handSlots]) { batch.instanceCount = 0; batch.names.length = 0; }
@@ -227,9 +265,11 @@ export class WebglScene {
         push(batch, solidPose(pose.position.x, separate ? -.0005 : -.0034, pose.position.z, width * 1.14, .00005, depth * 1.14), 61 + alpha);
       }
       const pickup = frame.pickup?.canTake && frame.pickup.batchPreviewSlotNames.includes(entity.slotName);
-      if (entity.display.selected || entity.display.hovered || entity.display.highlight > 0 || entity.display.drawn || pickup) {
-        const border = new Matrix4().fromArray(model).multiply(new Matrix4().makeScale(1.10, 1.06, .3));
-        push(batch, Float32Array.from(border.elements), entity.display.selected || pickup ? 42 : 43);
+      const latest = cue?.entityId === entity.entityId;
+      const lastDiscard = discardId === entity.entityId;
+      if (latest || lastDiscard || entity.display.selected || entity.display.hovered || entity.display.highlight > 0 || entity.display.drawn || pickup) {
+        const border = new Matrix4().fromArray(model).multiply(new Matrix4().makeScale(latest ? 1.22 : 1.10, latest ? 1.16 : 1.06, .3));
+        push(batch, Float32Array.from(border.elements), latest || lastDiscard || entity.display.selected || pickup ? 42 : 43);
       }
       push(batch, model, row, { kind: 'entity', id: entity.entityId });
     }
@@ -256,7 +296,7 @@ export class WebglScene {
         51 + frame.dice.values[i], frame.dice.canRoll ? { kind: 'dice', id: null } : null);
     }
     gl.disable(gl.SCISSOR_TEST); gl.viewport(0, 0, this.canvas.width, this.canvas.height);
-    gl.clearColor(.035, .065, .085, 1); gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+    gl.clearColor(.025, .11, .13, 1); gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
     gl.enable(gl.DEPTH_TEST); gl.depthFunc(gl.LEQUAL); gl.enable(gl.CULL_FACE); gl.cullFace(gl.BACK);
     gl.enable(gl.BLEND); gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
     gl.useProgram(this.program); gl.activeTexture(gl.TEXTURE0);
@@ -276,7 +316,7 @@ export class WebglScene {
     const sync = gl.fenceSync(gl.SYNC_GPU_COMMANDS_COMPLETE, 0);
     if (!sync) throw Error('GPU frame fence allocation failed.');
     gl.flush();
-    this.pending = { sync, commit: { frame, plan, viewport, milliseconds: performance.now() - started } };
+    this.pending = { sync, commit: { frame, plan, viewport, cue, discardId, milliseconds: performance.now() - started } };
   }
 
   private drawBatch(batch: Batch, rect: Rect, matrix: Float32Array, viewport: Viewport): void {
@@ -284,7 +324,7 @@ export class WebglScene {
     const x = Math.round(rect.x * ratio), y = Math.round((viewport.heightCssPx - rect.y - rect.height) * ratio);
     const width = Math.max(1, Math.round(rect.width * ratio)), height = Math.max(1, Math.round(rect.height * ratio));
     gl.enable(gl.SCISSOR_TEST); gl.scissor(x, y, width, height); gl.viewport(x, y, width, height);
-    gl.clearColor(.035, .065, .085, 1); gl.clear(gl.DEPTH_BUFFER_BIT | (batch === this.hand ? gl.COLOR_BUFFER_BIT : 0));
+    gl.clearColor(.025, .11, .13, 1); gl.clear(gl.DEPTH_BUFFER_BIT | (batch === this.hand ? gl.COLOR_BUFFER_BIT : 0));
     gl.uniformMatrix4fv(gl.getUniformLocation(this.program, 'u_viewProj'), false, matrix);
     const inverse = new Matrix4().fromArray(matrix).invert();
     const near = new Vector3(0, 0, -1).applyMatrix4(inverse), far = new Vector3(0, 0, 1).applyMatrix4(inverse);
@@ -314,6 +354,17 @@ export class WebglScene {
   cancelPending(): void {
     if (this.pending) this.gl.deleteSync(this.pending.sync);
     this.pending = null;
+  }
+
+  resetPresentation(): void { this.presentation.clear(); this.latestLabel.hidden = this.actionLabel.hidden = true; }
+
+  reconcile(frame: Frame): void {
+    this.presentation.reconcile(frame);
+    this.currentVisible = new Set(frame.entities.filter(entity => entity.appearance.showFace
+      && entity.appearance.knownFace && entity.appearance.faceIndex !== null).map(entity => entity.entityId));
+    if (this.latestEntityId && !this.currentVisible.has(this.latestEntityId)) {
+      this.latestLabel.hidden = true; this.latestTile.style.backgroundImage = 'none'; this.latestEntityId = null;
+    }
   }
 
   pick(x: number, y: number, touch = false): Target | null {
@@ -368,32 +419,74 @@ export class WebglScene {
   }
 
   private updateLabels(commit: SceneCommit): void {
+    const { frame, plan } = commit;
+    const rect = plan.board;
+    const point = new Vector3().applyMatrix4(new Matrix4().fromArray(this.matrices[0]));
+    const x = rect.x + (point.x + 1) * rect.width / 2, y = rect.y + (1 - point.y) * rect.height / 2;
+    const active = frame.turn?.activeSeat;
+    const phase = frame.turn?.phase;
+    const phaseLabel = phase === 'AwaitingDiscard' ? t(active === frame.session.actorSeat ? 'table.your_turn' : 'table.to_discard')
+      : phase === 'AwaitingClaim' ? t('table.claims_open') : phase ? phase.replace(/([a-z])([A-Z0-9])/g, '$1 $2') : t('table.waiting');
+    const turnText = `${active === null || active === undefined ? '◇' : ['E', 'S', 'W', 'N'][active]} · ${phaseLabel}`;
+    this.turnLabel.hidden = !frame.session.snapshotReady;
+    if (this.turnLabel.textContent !== turnText) this.turnLabel.textContent = turnText;
+    this.turnLabel.style.left = `${x}px`; this.turnLabel.style.top = `${y - 14}px`;
+    this.turnLabel.dataset.local = String(active !== null && active !== undefined && active === frame.session.actorSeat);
+    const cue = commit.cue, latest = commit.discardId ? plan.entities.get(commit.discardId)?.entity : null;
+    const spacious = rect.width / rect.height >= 1.8 && rect.height >= 180;
+    this.actionLabel.hidden = !cue || !spacious;
+    if (cue) {
+      const action = `${cue.seat === null ? '' : `${['E', 'S', 'W', 'N'][cue.seat]} · `}${t(`table.${cue.kind}`)}`;
+      if (this.actionLabel.textContent !== action) this.actionLabel.textContent = action;
+      this.actionLabel.style.left = `${x}px`;
+      this.actionLabel.style.top = `${Math.max(rect.y + 4, Math.min(rect.y + rect.height - 24, y + 12))}px`;
+    }
+    if (latest && this.currentVisible.has(latest.entityId) && latest.group === 'discard' && latest.appearance.showFace
+      && latest.appearance.knownFace && latest.appearance.faceIndex !== null) {
+      const face = latest.appearance.faceIndex;
+      this.latestLabel.hidden = !spacious; this.latestEntityId = latest.entityId;
+      this.latestLabel.dataset.accented = String(cue?.kind === 'discard' && cue.entityId === latest.entityId);
+      this.latestLabel.style.left = `${x}px`;
+      this.latestLabel.style.top = `${Math.max(rect.y + 4, Math.min(rect.y + rect.height - 60, y + 36))}px`;
+      this.latestTile.style.backgroundImage = `url("${faceAtlases[frame.presentation.tileLabels ? 1 : 0]}")`;
+      this.latestTile.style.backgroundPosition = `${face % 8 / 7 * 100}% ${(1536 - (Math.floor(face / 8) + 1) * 288) / 1248 * 100}%`;
+      const caption = `${latest.seat === null ? '' : `${['E', 'S', 'W', 'N'][latest.seat]} · `}${t('table.last_discard')}`;
+      if (this.latestCaption.textContent !== caption) this.latestCaption.textContent = caption;
+      const name = face < 27 ? t('hand.tile', { rank: face % 9 + 1, suit: t(`hand.suit_${Math.floor(face / 9)}`) }) : t('table.public_tile');
+      const label = `${caption}: ${name}`;
+      if (this.latestLabel.getAttribute('aria-label') !== label) this.latestLabel.setAttribute('aria-label', label);
+    } else { this.latestLabel.hidden = true; this.latestEntityId = null; this.latestTile.style.backgroundImage = 'none'; }
     const present = new Set<number>();
-    for (const seat of commit.frame.seats) {
+    for (const seat of frame.seats) {
       present.add(seat.seat);
       let node = this.labelNodes.get(seat.seat);
       if (!node) {
         node = document.createElement('span'); this.labelNodes.set(seat.seat, node); this.labels.append(node);
       }
-      const relative = (seat.seat - (commit.frame.session.viewSeat ?? 0) + 4) % 4;
-      const rect = commit.plan.board;
-      const positions = [[.5, .95], [.95, .5], [.5, .04], [.05, .5]];
+      const relative = (seat.seat - (frame.session.viewSeat ?? 0) + 4) % 4;
+      const positions = [[.025, .95], [.975, .5], [.975, .055], [.025, .5]];
       node.style.left = `${rect.x + rect.width * positions[relative][0]}px`;
       node.style.top = `${rect.y + rect.height * positions[relative][1]}px`;
-      const text = `${['E', 'S', 'W', 'N'][seat.seat]} · ${seat.nick ?? `Seat ${seat.seat + 1}`}${seat.score === null ? '' : ` · ${seat.score}`}`;
+      const action = cue?.seat === seat.seat ? `${t(`table.${cue.kind}`)} · ` : '';
+      const text = `${['E', 'S', 'W', 'N'][seat.seat]} · ${action}${seat.nick ?? `Seat ${seat.seat + 1}`}${seat.score === null ? '' : ` · ${seat.score}`}`;
       if (node.textContent !== text) node.textContent = text;
-      node.className = commit.frame.turn?.activeSeat === seat.seat ? 'webgl-seat active' : 'webgl-seat';
+      node.dataset.side = String(relative);
+      node.className = `${active === seat.seat ? 'webgl-seat active' : 'webgl-seat'}${commit.cue?.sourceSeat === seat.seat ? ' played' : ''}`;
     }
     for (const [seat, node] of this.labelNodes) if (!present.has(seat)) { node.remove(); this.labelNodes.delete(seat); }
   }
 
   clear(): void {
+    this.presentation.clear(); this.currentVisible.clear(); this.latestEntityId = null;
     this.cancelPending(); this.committed = null; this.picking = null;
     this.table.mesh.instanceCount = 0; this.hand.mesh.instanceCount = 0;
     this.table.targets.length = 0; this.hand.targets.length = 0;
-    this.labels.replaceChildren(); this.labelNodes.clear();
+    this.latestLabel.hidden = this.actionLabel.hidden = this.turnLabel.hidden = true;
+    this.latestTile.style.backgroundImage = 'none'; this.turnLabel.textContent = '';
+    for (const node of this.labelNodes.values()) node.remove();
+    this.labelNodes.clear();
     const gl = this.gl;
-    gl.disable(gl.SCISSOR_TEST); gl.clearColor(.035, .065, .085, 1); gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+    gl.disable(gl.SCISSOR_TEST); gl.clearColor(.025, .11, .13, 1); gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
   }
 
   private check(): void {
@@ -403,6 +496,7 @@ export class WebglScene {
   dispose(): void {
     if (this.disposed) return;
     this.disposed = true; this.cancelPending(); this.committed = null; this.picking = null;
+    this.presentation.clear(); this.currentVisible.clear();
     disposeTileMesh(this.gl, this.table.mesh); disposeTileMesh(this.gl, this.hand.mesh);
     for (const texture of this.atlases) this.gl.deleteTexture(texture);
     this.gl.deleteProgram(this.program); this.labels.remove(); this.labelNodes.clear();

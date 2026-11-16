@@ -25,6 +25,16 @@ test('PR source workflow runs exact WebGL-only source groups without licensed/pr
     assert.equal(upload.with['if-no-files-found'], 'error');
     assert.deepEqual(upload.with.path.trim().split('\n'), description.evidencePaths[group]);
   }
+  const backend = description.plans.backend.find(item => item.name === 'backend-tests');
+  const selectors = backend.argv[backend.argv.indexOf('--filter') + 1].split('|');
+  assert(selectors.includes('FullyQualifiedName~.Changsha.BotPacingTests'),
+    'Canonical backend CI must execute the real bot pacing regression class');
+  assert.equal(new Set(selectors).size, selectors.length);
+  assert.equal(backend.expected, 217, 'All eleven pacing cases must join the retained 206-case inventory');
+  const contracts = description.plans['frontend-source'].find(item => item.name === 'workflow-contracts');
+  assert(contracts.argv.includes('tests/migration/browser-ux.test.mjs'),
+    'Browser harness navigation guards must run in canonical source CI');
+  assert.equal(contracts.expected, 6);
 });
 
 test('frontend inventory retains authority/input/layout/privacy callers and actual default graph checks', () => {
@@ -32,8 +42,10 @@ test('frontend inventory retains authority/input/layout/privacy callers and actu
   for (const name of ['renderer-actions', 'renderer-frame', 'renderer-camera-controls', 'webgl-style', 'webgl-build', 'webgl-renderer']) {
     assert(tests.argv.includes(`tests/node/${name}.test.mjs`));
   }
+  assert(tests.argv.includes('tests/node/lobby-setup.test.mjs'),
+    'The newly named setup regression file is not selected by renderer/webgl globs');
   assert.equal(new Set(tests.argv).size, tests.argv.length);
-  assert.equal(tests.expected, 147);
+  assert.equal(tests.expected, 163);
   const commands = JSON.stringify(description.plans);
   assert.doesNotMatch(commands, /UNITY_LICENSE|unity-webgl|verify-unity|build_unity|baseline-fetch/);
 });

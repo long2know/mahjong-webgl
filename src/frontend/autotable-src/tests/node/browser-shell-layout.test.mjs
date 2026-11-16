@@ -13,6 +13,7 @@ function productionModules() {
   return buildSync({
     absWorkingDir: root, bundle: true, write: false, format: 'iife', platform: 'browser',
     target: 'es2022', loader: { '.css': 'empty' }, logLevel: 'silent',
+    define: { 'import.meta.url': JSON.stringify(new URL('../../src/renderer/webgl-scene.ts', import.meta.url).href) },
     stdin: {
       resolveDir: root,
       contents: `

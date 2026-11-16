@@ -157,6 +157,7 @@ export class WebglHost implements RendererHost {
         || previous.session.viewSeat !== frame.session.viewSeat
         || JSON.stringify(previous.presentation) !== JSON.stringify(frame.presentation))) this.cancelInput();
       this.queue = { layout, frame };
+      this.scene?.reconcile(frame);
       this.schedule();
     } catch (error) {
       this.unavailable(error instanceof Error ? error.message : 'Invalid renderer publication.');
@@ -310,7 +311,7 @@ export class WebglHost implements RendererHost {
     const next = rendererViewport(this.instanceId, (this.viewport?.resizeRevision ?? 0) + 1,
       { width: rect.width, height: rect.height, dpr: window.devicePixelRatio || 1, insets, separateHand: this.separateHand });
     if (!force && this.viewport && JSON.stringify({ ...this.viewport, resizeRevision: next.resizeRevision }) === JSON.stringify(next)) return;
-    this.cancelInput(); this.scene?.cancelPending(); this.inFlight = null;
+    this.cancelInput(); this.scene?.cancelPending(); this.scene?.resetPresentation(); this.inFlight = null;
     this.viewport = next; this.hooks.resized(next);
     if (this.disposed || this.viewport !== next) return;
     this.canvas.width = next.widthPx; this.canvas.height = next.heightPx;
@@ -330,7 +331,7 @@ export class WebglHost implements RendererHost {
     this.cancelInput();
     if (suspended) {
       if (this.animation) cancelAnimationFrame(this.animation);
-      this.animation = 0; this.scene?.cancelPending(); this.inFlight = null;
+      this.animation = 0; this.scene?.cancelPending(); this.scene?.resetPresentation(); this.inFlight = null;
     } else {
       this.measure(true); this.hooks.resumed(); this.schedule();
     }

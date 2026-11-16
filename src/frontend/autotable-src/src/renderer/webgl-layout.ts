@@ -194,12 +194,30 @@ export function buildWebglPlan(layout: Layout, frame: Frame, viewport: Viewport)
     plan.bounds = boundsFrom(new Vector3((thickness[1] - thickness[3]) / 2, 0, (thickness[2] - thickness[0]) / 2),
       new Vector3(middleWidth + thickness[1] + thickness[3] + .08, .08, middleDepth + thickness[0] + thickness[2] + .08));
   }
+  const expansion = new Vector3();
+  if (compact) {
+    const extent = size(plan.bounds), aspect = Math.max(.55, Math.min(4.5, plan.board.width / plan.board.height));
+    expansion.set(Math.max(0, extent.z * aspect - extent.x) / 2, 0, Math.max(0, extent.x / aspect - extent.z) / 2);
+    plan.bounds.expandByVector(expansion);
+  }
+  const offset = (seat: number, group: string): Vector3 => {
+    if (!compact) return new Vector3();
+    const side = (seat - (frame.session.viewSeat ?? 0) + 4) % 4;
+    if (group === 'discard') {
+      const midpoint = center(plan.rivers.get(seat) ?? boundsFrom(new Vector3(), new Vector3()));
+      return new Vector3(Math.sign(midpoint.x) * expansion.x * (side % 2 ? .6 : .4), 0,
+        Math.sign(midpoint.z) * expansion.z * (side % 2 ? .4 : .6));
+    }
+    return new Vector3(side === 1 ? expansion.x : side === 3 ? -expansion.x : 0, 0,
+      side === 0 ? -expansion.z : side === 2 ? expansion.z : 0);
+  };
   const map = (source: Pose, scale: number, lane: Lane, name: string): RenderPose => {
     const pose = sourcePose(source, scale);
     if (compact) {
       const local = normalize(pose, lane, name);
       const rotation = view.clone().multiply(seatRotation(lane.seat));
-      return { position: local.position.add(lane.translation).applyQuaternion(rotation), rotation: rotation.multiply(local.rotation), scale };
+      return { position: local.position.add(lane.translation).applyQuaternion(rotation).add(offset(lane.seat, lane.name)),
+        rotation: rotation.multiply(local.rotation), scale };
     }
     if (rectangular) pose.position.add(lane.translation.clone().applyQuaternion(seatRotation(lane.seat)));
     pose.position.applyQuaternion(view);
@@ -220,8 +238,9 @@ export function buildWebglPlan(layout: Layout, frame: Frame, viewport: Viewport)
   }
   for (const [id, lane] of lanes) if (!lane.bounds.isEmpty()) {
     const bounds = lane.bounds.clone().translate(lane.translation);
-    plan.groups.set(id, rotateBounds(bounds, view.clone().multiply(seatRotation(lane.seat))));
+    plan.groups.set(id, rotateBounds(bounds, view.clone().multiply(seatRotation(lane.seat))).translate(offset(lane.seat, lane.name)));
   }
+  for (const [seat, river] of plan.rivers) river.translate(offset(seat, 'discard'));
   if (separate && frame.localHand.seat !== null) {
     separateHand(plan, layout, frame, localWidth, addedKong);
   }
@@ -292,7 +311,7 @@ function separateHand(plan: WebglPlan, layout: Layout, frame: Frame, localWidth:
   let rows = 1, columns = count, width = 0;
   for (let n = 1; n <= count; n++) {
     const cols = Math.ceil(count / n);
-    const fit = Math.min(44, (available - (cols - 1) * 4) / (cols + .5), (height - (n - 1) * 6) / (n * 1.5));
+    const fit = Math.min(72, (available - (cols - 1) * 4) / (cols + .5), (height - (n - 1) * 6) / (n * 1.5));
     if (fit > width) { width = fit; rows = n; columns = cols; }
     if (fit >= 32) break;
   }
@@ -326,6 +345,7 @@ function separateHand(plan: WebglPlan, layout: Layout, frame: Frame, localWidth:
       }
       if (row === rows) continue;
       const scale = width * unit / .06;
+      const railWidth = Math.min(available, columns * width + (columns - 1) * 4 + width * .5);
       for (const upper of melds.filter(addedKong)) {
         const lower = melds.find(entity => entity.indexes[0] === upper.indexes[0] && entity.indexes[1] === 1)!;
         positions.set(upper.entityId, positions.get(lower.entityId)!);
@@ -333,7 +353,7 @@ function separateHand(plan: WebglPlan, layout: Layout, frame: Frame, localWidth:
       for (const [id, at] of positions) {
         const entity = plan.entities.get(id)!.entity;
         place(id, {
-          position: new Vector3((at.x - used[at.row] / 2) * unit,
+          position: new Vector3((at.x - railWidth / 2) * unit,
             entity.group === 'meld' ? sourcePose(entity.pose).position.y * scale * at.factor : .02 * scale,
             ((rows - 1) / 2 - at.row) * (width * 1.5 + 6) * unit),
           rotation: entity.group === 'meld' ? sourcePose(entity.pose).rotation.premultiply(seatRotation(entity.seat!).invert()) : new Quaternion(),

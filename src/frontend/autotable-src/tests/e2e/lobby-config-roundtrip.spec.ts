@@ -13,6 +13,7 @@
 // a live proof that `client-ui.buildWsUrl` forwards every lobby param.
 
 import { test, expect, type Page } from '@playwright/test';
+import { expandLobbyAdvanced } from './_helpers';
 
 async function landOnBareLobby(page: Page): Promise<void> {
   await page.goto('', { waitUntil: 'domcontentloaded' });
@@ -30,6 +31,7 @@ async function landOnBareLobby(page: Page): Promise<void> {
 }
 
 async function pickRadio(page: Page, name: string, value: string): Promise<void> {
+  await expandLobbyAdvanced(page);
   // Click the visible label that wraps the radio — the genuine user gesture
   // that works for both plain fieldset radios and the hidden-input card
   // options (`.lobby-card-option input` is opacity:0 / pointer-events:none).
@@ -139,7 +141,7 @@ test.describe('WP-E/#120 — lobby config round-trips URL ↔ WS handshake (C-2)
     // The seed lives in the collapsed "Advanced" <details> — expand it with a
     // real click on its summary first, exactly as a user would.
     const seed = '13572468';
-    await page.locator('#lobby-advanced > summary').click();
+    await expandLobbyAdvanced(page);
     const seedInput = page.locator('#lobby-seed');
     await expect(seedInput).toBeVisible();
     await seedInput.fill(seed);

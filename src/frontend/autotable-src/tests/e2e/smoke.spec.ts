@@ -19,6 +19,7 @@
 // in tandem with the next surface refactor.
 
 import { test, expect } from '@playwright/test';
+import { expandLobbyAdvanced } from './_helpers';
 
 test.describe('Mahjong — smoke', () => {
   test('app loads with Mahjong title', async ({ page }) => {
@@ -28,6 +29,7 @@ test.describe('Mahjong — smoke', () => {
 
   test('lobby is reachable on first load', async ({ page }) => {
     await page.goto('');
+    await expandLobbyAdvanced(page);
 
     // selectors.md pins `lobby-quick-match` as the lobby's primary CTA;
     // its visibility is a positive signal that the lobby panel mounted
@@ -43,6 +45,7 @@ test.describe('Mahjong — smoke', () => {
 
   test('Quick Match starts a game shell', async ({ page }) => {
     await page.goto('');
+    await expandLobbyAdvanced(page);
 
     const quickMatch = page.getByTestId('lobby-quick-match');
     await expect(quickMatch).toBeVisible({ timeout: 10_000 });

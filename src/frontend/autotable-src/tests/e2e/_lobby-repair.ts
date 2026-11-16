@@ -1,5 +1,6 @@
 import { expect, type Browser, type BrowserContext, type Page, type TestInfo } from '@playwright/test';
 import { discardByPointer } from './_playability';
+import { expandLobbyAdvanced } from './_helpers';
 
 export interface WireFrame {
   type?: string | number;
@@ -179,6 +180,7 @@ export async function openLobby(actor: Actor): Promise<void> {
   if (!await actor.page.locator('#lobby-panel').isVisible())
     await actor.page.getByTestId('lobby-toggle').click();
   await expect(actor.page.getByTestId('lobby-apply')).toBeVisible();
+  await expandLobbyAdvanced(actor.page);
 }
 
 export async function closeLobby(actor: Actor): Promise<void> {
