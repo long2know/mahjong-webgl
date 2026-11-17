@@ -52,6 +52,52 @@ page.on('websocket', socket => {
   });
 });
 
+// Passive metadata only: loader IDs distinguish documents even when their query strings are redacted.
+const scriptDiagnostics = { capacityPerList: 512, dropped: 0, requests: [], documents: [], requestFailures: [], pageErrors: [] };
+const scriptRequests = new Map(), browserRequests = new WeakMap(), documentEpochs = new Map();
+let diagnosticSequence = 0, committedDocumentEpoch = null, mainFrameId = null;
+const staticUrl = value => {
+  if (typeof value !== 'string' || !URL.canParse(value)) return null;
+  const url = new URL(value);
+  return ['http:', 'https:'].includes(url.protocol) ? url.origin + url.pathname
+    : url.protocol === 'about:' ? `about:${url.pathname}` : url.protocol;
+};
+const scriptUrl = value => typeof value === 'string' && URL.canParse(value) && new URL(value).pathname.endsWith('.js');
+const contentType = headers => Object.entries(headers ?? {}).find(([key]) => key.toLowerCase() === 'content-type')?.[1] ?? null;
+const documentEpoch = loaderId => {
+  if (!loaderId) return null;
+  if (!documentEpochs.has(loaderId)) {
+    if (documentEpochs.size === scriptDiagnostics.capacityPerList) { scriptDiagnostics.dropped++; return null; }
+    documentEpochs.set(loaderId, documentEpochs.size + 1);
+  }
+  return documentEpochs.get(loaderId);
+};
+const diagnostic = (list, fields) => {
+  if (list.length === scriptDiagnostics.capacityPerList) { scriptDiagnostics.dropped++; return null; }
+  const entry = { sequence: ++diagnosticSequence, observedAtEpochMs: Date.now(),
+    observedDocumentEpoch: committedDocumentEpoch, observedDocumentURL: staticUrl(page.url()), ...fields };
+  list.push(entry);
+  return entry;
+};
+const failureText = value => value?.replace(/https?:\/\/[^\s"'<>]+/g, match => staticUrl(match)) ?? null;
+page.on('request', request => {
+  if (request.resourceType() === 'script' || scriptUrl(request.url())) browserRequests.set(request, {
+    startedAtEpochMs: Date.now(), startedObservedDocumentEpoch: committedDocumentEpoch,
+    startedObservedDocumentURL: staticUrl(page.url()),
+  });
+});
+page.on('response', response => {
+  const entry = browserRequests.get(response.request());
+  if (entry) Object.assign(entry, { status: response.status(), contentType: contentType(response.headers()) });
+});
+page.on('requestfailed', request => {
+  const entry = browserRequests.get(request);
+  if (entry) diagnostic(scriptDiagnostics.requestFailures, { url: staticUrl(request.url()),
+    ...entry, status: entry.status ?? null, contentType: entry.contentType ?? null,
+    errorText: failureText(request.failure()?.errorText) });
+});
+page.on('pageerror', () => diagnostic(scriptDiagnostics.pageErrors, { pageErrorIndex: receipt.pageErrors.length - 1 }));
+
 async function ready() {
   await page.waitForFunction(() => window.game?.renderer?.state === 'ready'
     && window.game.renderer.scene.committed?.frame.session.snapshotReady
@@ -75,6 +121,62 @@ async function saveInputTrace(stage) {
     stage, records: trace.records.length, dropped: trace.dropped, observerErrors: trace.observerErrors };
 }
 try {
+  const network = await context.newCDPSession(page);
+  network.on('Page.frameNavigated', ({ frame }) => {
+    if (frame.parentId) return;
+    mainFrameId = frame.id;
+    committedDocumentEpoch = documentEpoch(frame.loaderId);
+    diagnostic(scriptDiagnostics.documents, { event: 'committed', frameId: frame.id, loaderId: frame.loaderId,
+      documentEpoch: committedDocumentEpoch, documentURL: staticUrl(frame.url) });
+  });
+  network.on('Network.requestWillBeSent', event => {
+    if (event.type === 'Document') diagnostic(scriptDiagnostics.documents, {
+      event: 'navigation-request', frameId: event.frameId, loaderId: event.loaderId,
+      documentEpoch: documentEpoch(event.loaderId), isObservedMainFrame: event.frameId === mainFrameId,
+      documentURL: staticUrl(event.request.url), atEpochMs: event.wallTime * 1000, atMonotonicMs: event.timestamp * 1000,
+    });
+    const previous = scriptRequests.get(event.requestId);
+    if (previous && event.redirectResponse) previous.redirect = {
+      sequence: ++diagnosticSequence, observedAtEpochMs: Date.now(), to: staticUrl(event.request.url),
+      status: event.redirectResponse.status, contentType: contentType(event.redirectResponse.headers),
+    };
+    if (event.type !== 'Script' && !scriptUrl(event.request.url)) return;
+    const entry = diagnostic(scriptDiagnostics.requests, { requestId: event.requestId,
+      frameId: event.frameId ?? null, loaderId: event.loaderId, documentEpoch: documentEpoch(event.loaderId),
+      documentURL: staticUrl(event.documentURL), url: staticUrl(event.request.url), resourceType: event.type,
+      initiatorType: event.initiator?.type ?? null, atEpochMs: event.wallTime * 1000, atMonotonicMs: event.timestamp * 1000,
+      status: null, contentType: null });
+    if (entry) scriptRequests.set(event.requestId, entry);
+  });
+  network.on('Network.responseReceived', event => {
+    const entry = scriptRequests.get(event.requestId);
+    if (entry) Object.assign(entry, { responseSequence: ++diagnosticSequence, responseObservedAtEpochMs: Date.now(),
+      responseAtMonotonicMs: event.timestamp * 1000, status: event.response.status,
+      contentType: contentType(event.response.headers), mimeType: event.response.mimeType,
+      fromDiskCache: event.response.fromDiskCache ?? false, fromServiceWorker: event.response.fromServiceWorker ?? false });
+  });
+  network.on('Network.loadingFailed', event => {
+    const entry = scriptRequests.get(event.requestId);
+    if (entry) Object.assign(entry, { failedSequence: ++diagnosticSequence, failedObservedAtEpochMs: Date.now(),
+      failedAtMonotonicMs: event.timestamp * 1000, failedObservedDocumentEpoch: committedDocumentEpoch,
+      errorText: failureText(event.errorText), canceled: event.canceled ?? false,
+      blockedReason: event.blockedReason ?? null, corsError: event.corsErrorStatus?.corsError ?? null });
+    scriptRequests.delete(event.requestId);
+  });
+  network.on('Network.loadingFinished', event => {
+    const entry = scriptRequests.get(event.requestId);
+    if (entry) Object.assign(entry, { finishedSequence: ++diagnosticSequence,
+      finishedObservedAtEpochMs: Date.now(), finishedAtMonotonicMs: event.timestamp * 1000,
+      encodedDataLength: event.encodedDataLength });
+    scriptRequests.delete(event.requestId);
+  });
+  await Promise.all([network.send('Page.enable'), network.send('Network.enable')]);
+  const { frameTree } = await network.send('Page.getFrameTree');
+  mainFrameId = frameTree.frame.id;
+  committedDocumentEpoch = documentEpoch(frameTree.frame.loaderId);
+  diagnostic(scriptDiagnostics.documents, { event: 'initial', frameId: mainFrameId,
+    loaderId: frameTree.frame.loaderId, documentEpoch: committedDocumentEpoch,
+    documentURL: staticUrl(frameTree.frame.url) });
   const health = await (await context.request.get(target.origin + prefix + '/health')).json();
   const buildResponse = await context.request.get(publicRoot + '/web-build.json');
   const build = await buildResponse.json();
@@ -236,6 +338,12 @@ try {
   throw error;
 } finally {
   receipt.completedAtUtc = new Date().toISOString();
+  const diagnosticPath = path.join(output, 'module-diagnostics.json');
+  fs.writeFileSync(diagnosticPath, JSON.stringify(scriptDiagnostics, null, 2) + '\n');
+  receipt.moduleDiagnostics = { path: path.relative(root, diagnosticPath), dropped: scriptDiagnostics.dropped,
+    requests: scriptDiagnostics.requests.length, documents: scriptDiagnostics.documents.length,
+    requestFailures: scriptDiagnostics.requestFailures.length, pageErrors: scriptDiagnostics.pageErrors.length,
+    redaction: 'Diagnostic URLs contain origin/static path only; no query/fragment, request bodies or auth/session payloads.' };
   fs.writeFileSync(path.join(output, 'receipt.json'), JSON.stringify(receipt, null, 2) + '\n');
   await browser.close();
 }
