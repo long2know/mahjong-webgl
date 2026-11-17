@@ -1,16 +1,112 @@
-.webgl-labels { position: absolute; inset: 0; pointer-events: none; overflow: hidden; }
+.webgl-labels { position: absolute; inset: 0; pointer-events: none; overflow: hidden; font-family: system-ui, sans-serif; }
 .webgl-seat {
     position: absolute;
+    /* Seat geometry must follow the committed camera, not a CSS transition. */
+    transition-property: none;
     transform: translate(-50%, -50%);
-    max-width: 9rem;
-    padding: .18rem .4rem;
-    border-radius: .3rem;
+    max-width: min(9rem, 19%);
+    padding: .3rem .5rem;
+    border: 1px solid #6baca33d;
+    border-radius: .5rem;
     color: #e5eee9;
-    background: rgba(8, 24, 27, .86);
+    background: rgba(5, 37, 43, .9);
     font: 600 clamp(9px, 1.15vw, 13px)/1.2 system-ui, sans-serif;
     text-align: center;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
 }
-.webgl-seat.active { color: #ffe4a0; border: 1px solid #cdb56d; }
+.webgl-seat.active { color: #ffe7a7; border-color: #e6c46e; box-shadow: inset 3px 0 #e6c46e; }
+.webgl-seat.played { outline: 2px solid #8cdfcd; outline-offset: 2px; }
+.webgl-seat[data-side="1"] { transform: translate(-100%, -50%); }
+.webgl-seat[data-side="3"] { transform: translate(0, -50%); }
+.webgl-seat[data-side="0"] { transform: translate(0, -50%); }
+.webgl-seat[data-side="2"] { transform: translate(-100%, -50%); }
+.webgl-turn {
+    position: absolute;
+    transform: translate(-50%, -100%);
+    max-width: 50%;
+    padding: 5px 10px;
+    border: 1px solid #7ba89d80;
+    border-radius: 20px;
+    background: #092f38ed;
+    color: #d2e8e2;
+    font: 600 clamp(10px, 1.5vw, 13px)/1.2 system-ui, sans-serif;
+    text-align: center;
+    white-space: nowrap;
+}
+.webgl-turn[data-local="true"] { border-color: #e6c46e; color: #ffe7a7; }
+.webgl-action {
+    position: absolute;
+    transform: translateX(-50%);
+    padding: 2px 7px;
+    border-radius: 12px;
+    background: #092f38ed;
+    color: #a7e8d8;
+    font: 600 11px/1.3 system-ui, sans-serif;
+}
+.webgl-action[hidden] { display: none; }
+.webgl-latest {
+    position: absolute;
+    transform: translateX(-50%);
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    padding: 5px 9px 5px 5px;
+    border: 1px solid #e6c46e;
+    border-radius: 8px;
+    background: #082f38f2;
+    box-shadow: 0 3px 10px #001c2440;
+    color: #ffe7a7;
+}
+.webgl-latest[hidden] { display: none; }
+.webgl-latest[data-accented="true"] { outline: 1px solid #e6c46e; outline-offset: 2px; }
+.webgl-latest-tile {
+    display: block;
+    flex: 0 0 30px;
+    width: 30px;
+    height: 45px;
+    border-radius: 3px;
+    background-color: #f7f3e6;
+    background-repeat: no-repeat;
+    background-size: 800% 533.333333%;
+    box-shadow: 0 2px #4e8d8a;
+}
+.webgl-latest-caption { max-width: 5rem; font-size: 11px; font-weight: 600; line-height: 1.25; }
+.webgl-meld-callout {
+    position: absolute;
+    /* Keep seat placement atomic despite the global reduced-motion duration. */
+    transition-property: none !important;
+    box-sizing: border-box;
+    max-width: var(--meld-max-width, 10rem);
+    padding: 8px 12px;
+    overflow: hidden;
+    color: #ffe193;
+    pointer-events: none;
+    user-select: none;
+}
+.webgl-meld-callout[hidden] { display: none; }
+.webgl-meld-word {
+    display: block;
+    font: italic 900 clamp(22px, 3.8vw, 36px)/1.1 system-ui, sans-serif;
+    letter-spacing: .025em;
+    white-space: nowrap;
+    -webkit-text-stroke: 2px #062e38;
+    paint-order: stroke fill;
+    text-shadow: 2px 3px 0 #031e27;
+    transform-origin: center;
+    animation: webgl-meld-pop 1050ms both;
+    animation-delay: var(--meld-delay, 0ms);
+    pointer-events: none;
+}
+.webgl-meld-callout[data-reduced="true"] .webgl-meld-word {
+    animation: none !important;
+    opacity: 1;
+    transform: none;
+}
+@keyframes webgl-meld-pop {
+    0% { opacity: 0; transform: scale(.82) rotate(-5deg); }
+    16% { opacity: 1; transform: scale(1.04) rotate(-2deg); }
+    26%, 78% { opacity: 1; transform: scale(1) rotate(-2deg); }
+    100% { opacity: 0; transform: scale(1) rotate(-2deg); }
+}

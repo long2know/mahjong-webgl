@@ -363,6 +363,12 @@
                 <div class="modal-body text-light text-center">
                     <h2 id="result-headline" class="mb-1">胡!</h2>
                     <div id="result-winner" class="mb-3 text-warning"></div>
+                    <div class="my-3" id="result-hand-section">
+                        <div class="text-white-50 mb-1">
+                            <small>胡牌 Winning hand</small>
+                        </div>
+                        <div id="result-hand" class="d-flex flex-wrap justify-content-center"></div>
+                    </div>
                     <table class="table table-sm table-dark mx-auto" id="result-score">
                         <thead>
                             <tr>
@@ -373,12 +379,6 @@
                         </thead>
                         <tbody></tbody>
                     </table>
-                    <div class="mt-3">
-                        <div class="text-white-50 mb-1">
-                            <small>胡牌 Winning hand</small>
-                        </div>
-                        <div id="result-hand" class="d-flex flex-wrap justify-content-center"></div>
-                    </div>
                 </div>
                 <div class="modal-footer justify-content-center">
                     <div id="result-dialog-status" role="status" aria-live="polite" data-testid="hand-result-status"></div>
@@ -1196,6 +1196,35 @@
             <section id="lobby-tab-my-game" class="lobby-tab-pane lobby-tab-panel-active"
                      role="tabpanel"
                      aria-labelledby="lobby-my-game-tab">
+            <section class="lobby-setup-common" aria-labelledby="lobby-setup-title">
+                <h3 id="lobby-setup-title" class="lobby-section-title" data-i18n="lobby.new_table_settings">New table settings</h3>
+                <p class="lobby-hint" data-i18n="lobby.creation_settings_hint">
+                    These choices configure a new table. Joining a table keeps its server settings.
+                </p>
+                <fieldset class="lobby-fieldset" id="lobby-variant-fieldset" data-testid="lobby-variant-fieldset">
+                    <legend data-i18n="lobby.variant">Variant</legend>
+                    <label><input type="radio" name="lobby-variant" value="changsha" checked> Changsha</label>
+                    <label><input type="radio" name="lobby-variant" value="four-player"> Riichi — 4 player</label>
+                    <label><input type="radio" name="lobby-variant" value="three-player"> Riichi — 3 player</label>
+                    <label><input type="radio" name="lobby-variant" value="bamboo"> Bamboo</label>
+                    <label><input type="radio" name="lobby-variant" value="minefield"> Minefield</label>
+                </fieldset>
+                <fieldset class="lobby-fieldset" id="lobby-bot-count-fieldset">
+                    <legend data-i18n="lobby.bot_count">Bots</legend>
+                    <label><input type="radio" name="lobby-bot-count" value="0"> <span data-i18n="lobby.bots_0">0 bots</span></label>
+                    <label><input type="radio" name="lobby-bot-count" value="1"> <span data-i18n="lobby.bots_1">1 bot</span></label>
+                    <label><input type="radio" name="lobby-bot-count" value="2"> <span data-i18n="lobby.bots_2">2 bots</span></label>
+                    <label><input type="radio" name="lobby-bot-count" value="3" checked> <span data-i18n="lobby.bots_3">3 bots</span></label>
+                    <label><input type="radio" name="lobby-bot-count" value="4" disabled> <span data-i18n="lobby.bots_4">4 bots (spectator only)</span></label>
+                </fieldset>
+            </section>
+            <details class="lobby-advanced" id="lobby-advanced">
+                <summary>
+                    <span data-i18n="lobby.advanced_options">Advanced options</span>
+                    <span id="lobby-advanced-summary" class="lobby-advanced-summary"></span>
+                </summary>
+                <div class="lobby-advanced-body">
+                <p class="lobby-advanced-hint" data-i18n="lobby.advanced_hint">Your current choices are kept. Open to adjust dealing, seat, difficulty, match length and scoring.</p>
             <!-- Phase J Wave 4 — Player chip strip.  Surfaces the live
                  `seats`+`nicks` collections as a 0..4 chip row so the
                  lobby user sees who is already in the game (and which
@@ -1242,19 +1271,6 @@
 
             <p id="lobby-room-configuration" class="lobby-room-configuration"
                role="status" aria-live="polite" data-testid="lobby-room-configuration" hidden></p>
-            <h3 class="lobby-section-title" data-i18n="lobby.new_table_settings">New table settings</h3>
-            <p class="lobby-hint" data-i18n="lobby.creation_settings_hint">
-                These choices configure a new table. Joining a table keeps its server settings.
-            </p>
-            <fieldset class="lobby-fieldset" id="lobby-variant-fieldset" data-testid="lobby-variant-fieldset">
-                <legend>Variant</legend>
-                <label><input type="radio" name="lobby-variant" value="changsha" checked> Changsha</label>
-                <label><input type="radio" name="lobby-variant" value="four-player"> Riichi — 4 player</label>
-                <label><input type="radio" name="lobby-variant" value="three-player"> Riichi — 3 player</label>
-                <label><input type="radio" name="lobby-variant" value="bamboo"> Bamboo</label>
-                <label><input type="radio" name="lobby-variant" value="minefield"> Minefield</label>
-            </fieldset>
-
             <fieldset class="lobby-fieldset" id="lobby-deal-mode-fieldset">
                 <legend>Deal mode <small class="lobby-hint">(Changsha only)</small></legend>
                 <label><input type="radio" name="lobby-deal-mode" value="manual"> Manual (click to pick)</label>
@@ -1279,15 +1295,6 @@
                     <a href="#" id="lobby-create-preset-link"
                        data-testid="lobby-create-preset-link">create / edit presets…</a>
                 </small>
-            </fieldset>
-
-            <fieldset class="lobby-fieldset" id="lobby-bot-count-fieldset">
-                <legend>Bots</legend>
-                <label><input type="radio" name="lobby-bot-count" value="0"> <span data-i18n="lobby.bots_0">0 bots</span></label>
-                <label><input type="radio" name="lobby-bot-count" value="1"> <span data-i18n="lobby.bots_1">1 bot</span></label>
-                <label><input type="radio" name="lobby-bot-count" value="2"> <span data-i18n="lobby.bots_2">2 bots</span></label>
-                <label><input type="radio" name="lobby-bot-count" value="3" checked> <span data-i18n="lobby.bots_3">3 bots</span></label>
-                <label><input type="radio" name="lobby-bot-count" value="4" disabled> <span data-i18n="lobby.bots_4">4 bots (spectator only)</span></label>
             </fieldset>
 
             <!-- Phase I Wave 4 — seat picker.  Pairs with botCount: Spectate
@@ -1373,13 +1380,6 @@
                 <p id="lobby-current-base-unit" class="lobby-hint" role="status" hidden></p>
             </fieldset>
 
-            <!-- Phase H Wave 1 — Advanced section: optional seed override.
-                 <details> collapses by default so the input doesn't clutter
-                 the main lobby.  Empty/blank → server picks a random seed
-                 (current behavior); filled → reproducible game. -->
-            <details class="lobby-advanced" id="lobby-advanced">
-                <summary>Advanced</summary>
-                <div class="lobby-advanced-body">
                     <label class="lobby-seed-label" for="lobby-seed">
                         Seed <small class="lobby-hint">(optional, 0–2³¹−1)</small>
                     </label>
@@ -1393,9 +1393,6 @@
                         Leave blank for a random seed.  A fixed seed makes the
                         whole game reproducible — useful for bug reports.
                     </p>
-                </div>
-            </details>
-
             <!-- Phase J Wave 5 — Make-public toggle.  Only meaningful
                  when the user is the host of an active game; the
                  toggle's change handler calls Bishop's SignalR
@@ -1434,6 +1431,19 @@
                 <div id="lobby-stats-panel" class="lobby-stats-panel"
                      data-testid="lobby-stats-panel"></div>
             </section>
+                <label class="lobby-save-defaults" title="Persist these choices in this browser for next visit">
+                    <input id="lobby-save-defaults" type="checkbox">
+                    <span data-i18n="lobby.save_defaults">Save as defaults</span>
+                </label>
+                <button id="lobby-quick-match" type="button"
+                        class="btn btn-outline-secondary btn-sm"
+                        data-testid="lobby-quick-match"
+                        title="Skip the pickers and start a 3-Medium-bot game now"
+                        data-i18n="lobby.quick_match">
+                    Quick Match
+                </button>
+                </div>
+            </details>
             </section>
             <!-- /lobby-tab-my-game -->
 
@@ -1634,23 +1644,9 @@
             </section>
         </div>
         <div class="lobby-footer">
-            <label class="lobby-save-defaults" title="Persist these choices in this browser for next visit">
-                <input id="lobby-save-defaults" type="checkbox">
-                Save as defaults
-            </label>
-            <!-- Phase J Wave 4 — Quick Match.  Bypasses the per-picker
-                 review step: snaps to 3 Medium bots / Auto seat / current
-                 variant + hand count + dealMode, and applies straight to
-                 the URL.  Same exit path as Apply & Start so existing
-                 boot flow handles validation. -->
-            <button id="lobby-quick-match" type="button"
-                    class="btn btn-success btn-sm"
-                    data-testid="lobby-quick-match"
-                    title="Skip the pickers and start a 3-Medium-bot game now">
-                ⚡ Quick Match
-            </button>
-            <button id="lobby-apply" type="button" class="btn btn-warning btn-sm" data-testid="lobby-apply">
-                Apply &amp; Start
+            <button id="lobby-apply" type="button" class="btn btn-success btn-sm" data-testid="lobby-apply"
+                    data-i18n="lobby.create_game">
+                Start game
             </button>
         </div>
         <!-- Phase J Wave 4 — Settings shortcut.  Opens the existing

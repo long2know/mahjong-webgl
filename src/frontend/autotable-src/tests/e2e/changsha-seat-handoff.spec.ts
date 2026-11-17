@@ -27,6 +27,7 @@
 // the Quick Match cell additionally guards the mobile Leave-Seat hit target.
 
 import { test, expect, type Page, type TestInfo } from '@playwright/test';
+import { expandLobbyAdvanced } from './_helpers';
 
 function resolveBase(baseURL: string | undefined): string {
   return baseURL ?? process.env.E2E_BASE_URL ?? 'http://localhost:8080/autotable/';
@@ -295,6 +296,7 @@ test.describe('@seat-handoff Changsha seat/start deadlock (Ferro live-UX regress
     // Base lobby: a URL with no concrete gameId shows the New Game surface, which
     // hosts the Quick Match button.
     await page.goto(base, { waitUntil: 'domcontentloaded' });
+    await expandLobbyAdvanced(page);
     const quickMatch = page.locator('#lobby-quick-match');
     await quickMatch.waitFor({ state: 'visible', timeout: 30_000 });
 

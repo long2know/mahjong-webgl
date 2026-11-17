@@ -240,7 +240,7 @@ public sealed class ChangshaWinDetector : IWinDetector
         return TryStandardDecomposition(counts, concealedMeldsNeeded);
     }
 
-    private static bool TryStandardDecomposition(int[] counts, int meldsNeeded)
+    private static bool TryStandardDecomposition(int[] counts, int meldsNeeded, List<int[]>? groups = null)
     {
         for (var logical = 0; logical < 27; logical++)
         {
@@ -252,11 +252,14 @@ public sealed class ChangshaWinDetector : IWinDetector
                 continue;
 
             counts[logical] -= 2;
-            var canForm = CanFormMelds(counts, meldsNeeded);
+            var canForm = CanFormMelds(counts, meldsNeeded, groups);
             counts[logical] += 2;
 
             if (canForm)
+            {
+                groups?.Add([logical, logical]);
                 return true;
+            }
         }
         return false;
     }
@@ -300,7 +303,7 @@ public sealed class ChangshaWinDetector : IWinDetector
         return TryAllPungs(counts);
     }
 
-    private static bool TryAllPungs(int[] counts)
+    private static bool TryAllPungs(int[] counts, List<int[]>? groups = null)
     {
         for (var logical = 0; logical < 27; logical++)
         {
@@ -312,7 +315,19 @@ public sealed class ChangshaWinDetector : IWinDetector
             counts[logical] += 2;
 
             if (canForm)
+            {
+                if (groups is not null)
+                {
+                    for (var tile = 0; tile < counts.Length; tile++)
+                    {
+                        var remaining = counts[tile] - (tile == logical ? 2 : 0);
+                        for (var count = 0; count < remaining / 3; count++)
+                            groups.Add([tile, tile, tile]);
+                    }
+                    groups.Add([logical, logical]);
+                }
                 return true;
+            }
         }
         return false;
     }
@@ -429,7 +444,7 @@ public sealed class ChangshaWinDetector : IWinDetector
         return pairs == 7;
     }
 
-    private static bool TryDecompositionAnyPair(int[] counts, int meldsNeeded)
+    private static bool TryDecompositionAnyPair(int[] counts, int meldsNeeded, List<int[]>? groups = null)
     {
         for (var logical = 0; logical < 27; logical++)
         {
@@ -437,16 +452,19 @@ public sealed class ChangshaWinDetector : IWinDetector
                 continue;
 
             counts[logical] -= 2;
-            var canForm = CanFormMelds(counts, meldsNeeded);
+            var canForm = CanFormMelds(counts, meldsNeeded, groups);
             counts[logical] += 2;
 
             if (canForm)
+            {
+                groups?.Add([logical, logical]);
                 return true;
+            }
         }
         return false;
     }
 
-    private static bool CanFormMelds(int[] counts, int needed)
+    private static bool CanFormMelds(int[] counts, int needed, List<int[]>? groups = null)
     {
         if (needed == 0)
             return counts.All(c => c == 0);
@@ -458,9 +476,10 @@ public sealed class ChangshaWinDetector : IWinDetector
         if (counts[logical] >= 3)
         {
             counts[logical] -= 3;
-            if (CanFormMelds(counts, needed - 1))
+            if (CanFormMelds(counts, needed - 1, groups))
             {
                 counts[logical] += 3;
+                groups?.Insert(0, [logical, logical, logical]);
                 return true;
             }
             counts[logical] += 3;
@@ -472,11 +491,12 @@ public sealed class ChangshaWinDetector : IWinDetector
             counts[logical]--;
             counts[logical + 1]--;
             counts[logical + 2]--;
-            if (CanFormMelds(counts, needed - 1))
+            if (CanFormMelds(counts, needed - 1, groups))
             {
                 counts[logical]++;
                 counts[logical + 1]++;
                 counts[logical + 2]++;
+                groups?.Insert(0, [logical, logical + 1, logical + 2]);
                 return true;
             }
             counts[logical]++;
@@ -485,6 +505,63 @@ public sealed class ChangshaWinDetector : IWinDetector
         }
 
         return false;
+    }
+
+    internal static IReadOnlyList<(string Kind, int[] TileIds)>? DescribeWinningGroups(
+        ChangshaHandState hand, WinResult win)
+    {
+        bool HasPattern(WinPattern pattern) => win.Pattern == pattern || win.AllPatterns.Contains(pattern);
+        var counts = BuildLogicalCounts(hand.ConcealedTiles);
+        var logicalGroups = new List<int[]>();
+        if (HasPattern(WinPattern.SevenPairs))
+        {
+            if (!CheckSevenPairs(hand.ConcealedTiles, hand.Melds)) return null;
+            for (var logical = 0; logical < counts.Length; logical++)
+                for (var pair = 0; pair < counts[logical] / 2; pair++)
+                    logicalGroups.Add([logical, logical]);
+        }
+        else if (HasPattern(WinPattern.NineTerminals)
+            && !HasPattern(WinPattern.AllPungs) && !HasPattern(WinPattern.FullFlush) && !win.IsFullFlush)
+        {
+            if (!CheckNineTerminals(hand.ConcealedTiles, hand.Melds)) return null;
+            return [("special", hand.ConcealedTiles.Order().ToArray())];
+        }
+        else
+        {
+            var needed = 4 - hand.Melds.Count;
+            if (needed < 0 || counts.Sum() != needed * 3 + 2) return null;
+            if (HasPattern(WinPattern.AllPungs))
+            {
+                if (hand.Melds.Any(meld => meld.Kind == MeldKind.Chow)
+                    || !TryAllPungs(counts, logicalGroups)) return null;
+            }
+            else if (HasPattern(WinPattern.FullFlush) || win.IsFullFlush)
+            {
+                if (!CheckFullFlush(hand.ConcealedTiles, hand.Melds)
+                    || !TryDecompositionAnyPair(counts, needed, logicalGroups)) return null;
+            }
+            else if (!TryStandardDecomposition(counts, needed, logicalGroups))
+            {
+                return null;
+            }
+        }
+
+        // Record the same deterministic solver witness; never use another shape to explain scoring.
+        var copies = hand.ConcealedTiles.GroupBy(ChangshaDeckBuilder.GetLogicalTile)
+            .ToDictionary(group => group.Key, group => new Queue<int>(group.Order()));
+        var result = new List<(string Kind, int[] TileIds)>();
+        foreach (var logicals in logicalGroups)
+        {
+            var tiles = new int[logicals.Length];
+            for (var index = 0; index < logicals.Length; index++)
+            {
+                if (!copies.TryGetValue(logicals[index], out var available)
+                    || !available.TryDequeue(out tiles[index])) return null;
+            }
+            var kind = logicals.Length == 2 ? "pair" : logicals[0] == logicals[1] ? "pung" : "chow";
+            result.Add((kind, tiles));
+        }
+        return copies.Values.All(available => available.Count == 0) ? result : null;
     }
 
     private static int[] BuildLogicalCounts(List<int> tileIds)

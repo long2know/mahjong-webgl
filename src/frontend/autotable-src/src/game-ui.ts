@@ -16,6 +16,7 @@ import { setElHidden, showEl, hideEl } from './dom-utils';
 import { getGameState, getGameStateStatus, subscribeGameState } from './game-state';
 import { onLanguageChange, t } from './i18n';
 import { getRuleActionControls, type RuleActionControls } from './ui/rule-action-controls';
+import { renderResultTiles } from './ui/result-hand';
 import {
   DealType,
   Conditions,
@@ -1047,7 +1048,7 @@ export class GameUi {
     });
     onLanguageChange(() => {
       const result = this.client.result.get('current');
-      if (result !== null) this.renderResultHand(result.hand);
+      if (result !== null) this.renderResultHand(result.hand, result);
       this.renderResultReadiness(this.handResultState.presentation());
     });
     this.refreshResultDialog();
@@ -1184,35 +1185,11 @@ export class GameUi {
       tbody.appendChild(tr);
     }
 
-    this.renderResultHand(result.hand);
+    this.renderResultHand(result.hand, result);
   }
 
-  private renderResultHand(hand: readonly number[]): void {
-    const handDiv = this.elements.resultHand;
-    handDiv.innerHTML = '';
-    for (const tile of hand) {
-      const cell = document.createElement('div');
-      cell.className = 'result-tile';
-      cell.setAttribute('role', 'img');
-      let label: string;
-      if (typeof tile === 'number' && Number.isInteger(tile) && tile >= 0 && tile < 108) {
-        // Result hands contain physical IDs, including melds, in server order.
-        const face = Math.floor(tile / 4);
-        cell.dataset.tileId = String(tile);
-        cell.dataset.face = String(face);
-        label = t('hand.tile', { rank: face % 9 + 1, suit: t(`hand.suit_${Math.floor(face / 9)}`) });
-        cell.textContent = label;
-      } else {
-        cell.className += ' result-tile-unknown';
-        cell.textContent = '?';
-        label = t('result_dialog.unknown_tile');
-        // eslint-disable-next-line no-console
-        console.warn('[result] Invalid winning-hand tile ID; displaying an unknown tile.');
-      }
-      cell.setAttribute('aria-label', label);
-      cell.title = label;
-      handDiv.appendChild(cell);
-    }
+  private renderResultHand(hand: readonly number[], result?: HandResultEntry): void {
+    renderResultTiles(this.elements.resultHand, hand, result);
   }
 
   // Phase I Wave 2 — render a 自摸 / 点炮 pill next to the winning seat name

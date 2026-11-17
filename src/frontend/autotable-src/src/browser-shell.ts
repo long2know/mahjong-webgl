@@ -2,6 +2,8 @@ import { getActiveLocale, onLanguageChange, t } from './i18n';
 import { setDrawerAccessibility } from './ui/drawer-accessibility';
 import './browser-shell.css';
 
+const FOCUS_TABLE_KEY = 'mahjong.table.focus.v1';
+
 /** Reparent the existing controls; their IDs, handlers and feature gates stay authoritative. */
 export function installBrowserShell(): boolean {
   if (document.getElementById('browser-shell')) return true;
@@ -10,13 +12,19 @@ export function installBrowserShell(): boolean {
   const nodes = ids.map(id => document.getElementById(id));
   if (nodes.some(node => node === null)) return false;
   const [newGame, lobby, gameSettings, preferences, moves, variant, turn, chat, log] = nodes as HTMLElement[];
+  let focused = false;
+  try { focused = window.localStorage.getItem(FOCUS_TABLE_KEY) === 'true'; } catch { /* Storage is optional. */ }
 
   const shell = document.createElement('header');
   shell.id = 'browser-shell';
   const controls = document.createElement('nav');
   controls.className = 'browser-toolbar';
   controls.setAttribute('aria-label', 'Table controls');
-  controls.append(newGame, lobby, gameSettings, preferences, moves);
+  const focus = document.createElement('button');
+  focus.id = 'table-focus-toggle';
+  focus.type = 'button';
+  focus.setAttribute('aria-controls', 'bot-banner move-log');
+  controls.append(newGame, lobby, gameSettings, preferences, moves, focus);
   const context = document.createElement('div');
   context.className = 'browser-context';
   context.append(variant, turn);
@@ -48,12 +56,27 @@ export function installBrowserShell(): boolean {
     label(gameSettings, `${gameLabel} · ${t('settings.title')}`, gameLabel);
     label(preferences, t('settings.title'));
     label(moves, t('replay.move_log'), movesLabel);
+    const focusLabel = t(focused ? 'shell.show_panels' : 'shell.hide_panels');
+    label(focus, focusLabel);
+    focus.setAttribute('aria-label', focusLabel);
+    focus.setAttribute('title', focusLabel);
     gameSettings.setAttribute('title', t('lobby.new_table_settings'));
     moves.setAttribute('aria-label', t('replay.move_log'));
     lobby.setAttribute('aria-controls', 'lobby-panel');
     lobby.setAttribute('aria-haspopup', 'dialog');
   };
-  localize();
+  const applyFocus = (): void => {
+    document.body.classList.toggle('table-panels-collapsed', focused);
+    focus.setAttribute('aria-pressed', String(focused));
+    focus.setAttribute('aria-expanded', String(!focused));
+    localize();
+  };
+  focus.addEventListener('click', () => {
+    focused = !focused;
+    try { window.localStorage.setItem(FOCUS_TABLE_KEY, String(focused)); } catch { /* Keep the current page usable. */ }
+    applyFocus();
+  });
+  applyFocus();
   onLanguageChange(localize);
   document.body.classList.add('browser-shell-active');
   document.body.appendChild(shell);

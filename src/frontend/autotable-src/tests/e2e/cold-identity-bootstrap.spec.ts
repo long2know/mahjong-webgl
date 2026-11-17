@@ -3,6 +3,7 @@ import { createHash } from 'node:crypto';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { waitForBoardHand } from './_mobile-geometry';
+import { expandLobbyAdvanced } from './_helpers';
 
 interface IdentityReply {
   page: string;
@@ -84,6 +85,7 @@ test('fresh normal pages keep one verified identity across API, signed cookie, p
       const element = owner.locator(selector);
       if (await element.isVisible()) await element.click();
     }
+    await expandLobbyAdvanced(owner);
     await owner.locator('#lobby-hand-count-fieldset label:has(input[value="1"])').click();
     await owner.locator('label:has(input[name="lobby-deal-mode"][value="auto"])').click();
     await owner.locator('label:has(input[name="lobby-bot-count"][value="3"])').click();

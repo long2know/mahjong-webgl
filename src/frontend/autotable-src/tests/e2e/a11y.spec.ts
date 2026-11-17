@@ -23,6 +23,7 @@
 
 import { test, expect, type Page } from '@playwright/test';
 import AxeBuilder from '@axe-core/playwright';
+import { expandLobbyAdvanced } from './_helpers';
 
 // The mobile-chrome project is skipped — Bootstrap's off-canvas
 // behaviours produce a number of aria-hidden-focus warnings on the
@@ -31,6 +32,7 @@ test.skip(({ browserName, isMobile }) => isMobile, 'Mobile a11y pass deferred to
 
 async function gotoLobby(page: Page): Promise<void> {
   await page.goto('');
+  await expandLobbyAdvanced(page);
   await expect(page.getByTestId('lobby-quick-match')).toBeVisible({ timeout: 10_000 });
 }
 

@@ -129,7 +129,8 @@ export class Game {
       viewMode: cameraPerspective(settings, this.width, this.height) ? 'perspective' : 'flat',
       boardLayout: settings.boardLayout === 'auto' ?
         compact || this.world.conditions.gameType === GameType.CHANGSHA ? 'rectangular' : 'classic' : settings.boardLayout,
-      handLayout: settings.handLayout === 'auto' ? compact || this.height < 520 ? 'separate' : 'in-table' : settings.handLayout,
+      handLayout: settings.handLayout === 'auto' ?
+        compact || this.height < 520 || this.world.conditions.gameType === GameType.CHANGSHA ? 'separate' : 'in-table' : settings.handLayout,
       tileLabels: this.settings.tileLabels.checked, lookDown: this.lookDown.pos, zoom: this.zoom.pos,
       ...(camera ? { camera } : {}),
     };

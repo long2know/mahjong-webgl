@@ -1,6 +1,7 @@
 import { test, expect, type Page } from '@playwright/test';
 import { newActor, applyRoom, closeLobby, dismissPrompts, probe } from './_lobby-repair';
 import { mobileGeometry, waitForBoardHand } from './_mobile-geometry';
+import { expandLobbyAdvanced } from './_helpers';
 
 async function authority(page: Page): Promise<unknown> {
   return page.evaluate(() => {
@@ -28,8 +29,8 @@ for (const viewport of [
     try {
       const actor = await newActor(browser, baseURL, info, 'original-gear', context);
       const page = actor.page;
+      await expandLobbyAdvanced(page);
       await page.locator('#lobby-hand-count-fieldset label:has(input[value="1"])').click();
-      await page.locator('#lobby-advanced summary').click();
       await page.locator('#lobby-seed').fill('4100');
       await applyRoom(actor, 3, 0, 'auto');
       await closeLobby(actor);

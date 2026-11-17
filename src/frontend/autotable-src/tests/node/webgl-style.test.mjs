@@ -71,6 +71,7 @@ test('four camera-relative discard regions stay on felt, avoid dice/each other, 
     try {
       h.join(); h.snapshot([['4', thing('hand.0@0', 1)]]);
       const { buildWebglPlan, discardRegions } = h.load('renderer/webgl-layout.ts');
+      const { TABLE_FELT_Y } = h.load('renderer/webgl-style.ts');
       const { rendererViewport } = h.load('renderer/renderer-viewport.ts');
       for (const [width, height] of [[390, 844], [1280, 800]]) for (const boardLayout of ['classic', 'rectangular']) {
         for (const viewSeat of [0, 1, 2, 3]) {
@@ -89,7 +90,8 @@ test('four camera-relative discard regions stay on felt, avoid dice/each other, 
             assert(region.min.x >= plan.bounds.min.x && region.max.x <= plan.bounds.max.x);
             assert(region.min.z >= plan.bounds.min.z && region.max.z <= plan.bounds.max.z);
             assert(!overlaps(region, dice), 'felt regions leave the dice plate clear');
-            assert.equal(region.min.y, -.004); assert.equal(region.max.y, -.004);
+            assert(region.min.y > TABLE_FELT_Y && region.max.y < 0, 'river markings sit above felt and below tile bottoms');
+            assert.equal(region.min.y, region.max.y);
           }
           for (let a = 0; a < 4; a++) for (let b = a + 1; b < 4; b++) assert(!overlaps(regions[a], regions[b]));
           assert.deepEqual(plain([...plan.entities]), entities);

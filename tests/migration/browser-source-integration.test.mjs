@@ -92,7 +92,7 @@ function actualGame({ advanceAnimations = false } = {}) {
     body.append(element);
   }
   const window = Object.assign(new EventTarget(), {
-    location: new URL('http://localhost/'),
+    location: new URL('http://localhost/?variant=four_player'),
     innerWidth: 1280, innerHeight: 800, devicePixelRatio: 2,
     visualViewport: Object.assign(new EventTarget(), { height: 800, offsetTop: 0 }),
     localStorage: { getItem: () => null, setItem() {} },

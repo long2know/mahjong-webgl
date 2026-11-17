@@ -17,6 +17,7 @@
 // (Phase J Wave 8 § Rule presets).
 
 import { test, expect, type Page } from '@playwright/test';
+import { expandLobbyAdvanced } from './_helpers';
 
 async function openLobby(page: Page): Promise<void> {
   await page.goto('');
@@ -57,6 +58,7 @@ test.describe('Mahjong Autotable — rule presets', () => {
       return;
     }
 
+    await expandLobbyAdvanced(page);
     await expect(select).toBeVisible({ timeout: 10_000 });
     // Wait for the GET /api/rule-presets fetch to settle.
     await page.waitForTimeout(750);

@@ -135,6 +135,7 @@ import { installDisplayPreferences } from './theme';
 // follow-seat helper (~5 KB after minify).  <1 % of sessions
 // land on a spectator URL (W18 analytics).
 import { setElHidden, showEl, hideEl } from './dom-utils';
+import './ui/lobby-setup.css';
 //
 // The lobby is a small overlay panel anchored top-left of the autotable
 // page.  It lets the user pick the Phase F query params
@@ -441,11 +442,16 @@ function parseLocalStorageState(): Partial<LobbyState> {
 function resolveInitialState(): LobbyState {
   const url = parseUrlState();
   const ls = parseLocalStorageState();
+  let preferredVariant: Variant | undefined;
+  try {
+    const preferred = window.localStorage.getItem('mahjong.preferredVariant')?.toLowerCase().replace(/_/g, '-');
+    if (preferred && isVariant(preferred)) preferredVariant = preferred;
+  } catch { /* Storage is optional. */ }
   const seat = url.seat !== undefined ? url.seat : (ls.seat !== undefined ? ls.seat : DEFAULTS.seat);
   const rawBotCount = url.botCount ?? ls.botCount ?? DEFAULTS.botCount;
   const botCount = clampBotCountForSeat(rawBotCount, seat);
   return {
-    variant: url.variant ?? ls.variant ?? DEFAULTS.variant,
+    variant: url.variant ?? ls.variant ?? preferredVariant ?? DEFAULTS.variant,
     dealMode: url.dealMode ?? ls.dealMode ?? DEFAULTS.dealMode,
     botCount,
     botDifficulty: url.botDifficulty ?? ls.botDifficulty ?? DEFAULTS.botDifficulty,
@@ -696,6 +702,8 @@ export function initLobby(client?: Client): void {
     document.getElementById('lobby-save-defaults') as HTMLInputElement | null;
   const aboutLink =
     document.getElementById('lobby-about-link') as HTMLAnchorElement | null;
+  const advanced = document.getElementById('lobby-advanced') as HTMLDetailsElement | null;
+  const advancedSummary = document.getElementById('lobby-advanced-summary');
   let configurationEdited = false;
 
   // Ensure the About link always targets the canonical Known Limitations
@@ -723,6 +731,7 @@ export function initLobby(client?: Client): void {
     if (seedError !== null) {
       setElHidden(seedError, valid);
     }
+    if (!valid && advanced) advanced.open = true;
     return valid;
   }
 
@@ -731,7 +740,21 @@ export function initLobby(client?: Client): void {
     const valid = baseUnitInput.disabled || parseBaseUnit(baseUnitInput.value) !== null;
     baseUnitInput.setAttribute('aria-invalid', String(!valid));
     if (baseUnitError !== null) setElHidden(baseUnitError, valid);
+    if (!valid && advanced) advanced.open = true;
     return valid;
+  }
+
+  function refreshAdvancedSummary(): void {
+    if (!advancedSummary) return;
+    const state = readPickers();
+    const selected = (inputs: HTMLInputElement[]): string => inputs.find(input => input.checked)?.parentElement?.textContent?.trim().replace(/\s+/g, ' ') ?? '';
+    const parts = [t('lobby.setup_hands', { count: state.handCount })];
+    if (state.variant === 'changsha') parts.unshift(selected(dealModeInputs));
+    if (state.botCount) parts.push(selected(botDifficultyInputs));
+    if (state.seat !== null) parts.push(selected(seatInputs));
+    if (state.baseUnit !== DEFAULT_BASE_UNIT) parts.push(`${t('lobby.base_unit')} ${state.baseUnit}`);
+    if (state.seed !== null) parts.push(`${t('lobby.seed')} ${state.seed}`);
+    advancedSummary.textContent = parts.filter(Boolean).join(' · ');
   }
 
   function readPickers(): LobbyState {
@@ -768,6 +791,12 @@ export function initLobby(client?: Client): void {
 
   function writePickers(state: LobbyState): void {
     for (const i of variantInputs) i.checked = (i.value === state.variant);
+    panel!.dataset.setupReady = 'true';
+    const variantSelect = document.getElementById('ferro-variant-select') as HTMLSelectElement | null;
+    if (variantSelect) {
+      variantSelect.value = state.variant;
+      variantSelect.setAttribute('value', state.variant);
+    }
     for (const i of dealModeInputs) i.checked = (i.value === state.dealMode);
     for (const i of botCountInputs) i.checked = (i.value === String(state.botCount));
     for (const i of botDifficultyInputs) i.checked = (i.value === state.botDifficulty);
@@ -815,6 +844,7 @@ export function initLobby(client?: Client): void {
     if (spectatorHint !== null) {
       setElHidden(spectatorHint, !isSpectator);
     }
+    refreshAdvancedSummary();
   }
 
   function showPanel(): void {
@@ -842,10 +872,11 @@ export function initLobby(client?: Client): void {
   onLanguageChange(renderRoomConfiguration);
   for (const input of [...variantInputs, ...dealModeInputs, ...botCountInputs, ...botDifficultyInputs,
     ...handCountInputs, ...seatInputs]) {
-    input.addEventListener('change', () => { configurationEdited = true; });
+    input.addEventListener('change', () => { configurationEdited = true; refreshAdvancedSummary(); });
   }
-  seedInput?.addEventListener('input', () => { configurationEdited = true; });
-  baseUnitInput?.addEventListener('input', () => { configurationEdited = true; });
+  seedInput?.addEventListener('input', () => { configurationEdited = true; refreshAdvancedSummary(); });
+  baseUnitInput?.addEventListener('input', () => { configurationEdited = true; refreshAdvancedSummary(); });
+  onLanguageChange(refreshAdvancedSummary);
 
   for (const i of variantInputs) i.addEventListener('change', refreshDisabledStates);
   for (const i of botCountInputs) i.addEventListener('change', refreshDisabledStates);

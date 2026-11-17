@@ -11,7 +11,8 @@
 // Setup for the upstream Riichi / Bamboo / Minefield variants).
 //
 // This module surfaces that switch as a prominent `<select>` at the top
-// of the lobby panel.  Selecting a variant:
+// of the lobby panel. An open setup panel edits a draft; Start game commits
+// all its current choices together. Outside an open setup, selecting a variant:
 //
 //   1) Writes the chosen value to `localStorage['mahjong.preferredVariant']`
 //      so it sticks across reloads.
@@ -47,6 +48,7 @@ import './variant-picker.css';
 // paths — this guarantees the enhanced (screenshottable, readable) popup wraps
 // the variant switcher wherever it appears. Idempotent + fallback-safe.
 import './dark-listbox';
+import { onLanguageChange, t } from '../i18n';
 import {
   resolveApplyGameId,
   buildFreshGameUrl,
@@ -191,7 +193,7 @@ function buildDropdownSection(): HTMLElement {
 
   const heading = document.createElement('div');
   heading.className = 'ferro-variant-picker-label';
-  heading.textContent = 'Variant';
+  heading.textContent = t('lobby.variant');
   section.appendChild(heading);
 
   const select = document.createElement('select');
@@ -219,7 +221,9 @@ function buildDropdownSection(): HTMLElement {
     return host;
   }
 
-  const initialValue = resolveInitialVariant();
+  const initialValue = document.getElementById('lobby-panel')?.dataset.setupReady === 'true'
+    ? document.querySelector<HTMLInputElement>('input[name="lobby-variant"]:checked')?.value ?? resolveInitialVariant()
+    : resolveInitialVariant();
   for (const opt of VARIANT_OPTIONS) {
     const optionEl = document.createElement('option');
     optionEl.value = opt.value;
@@ -232,7 +236,11 @@ function buildDropdownSection(): HTMLElement {
 
   const hint = document.createElement('div');
   hint.className = 'ferro-variant-picker-hint';
-  hint.textContent = 'Switching variant starts a fresh table.';
+  hint.textContent = t('lobby.variant_start_hint');
+  onLanguageChange(() => {
+    heading.textContent = t('lobby.variant');
+    hint.textContent = t('lobby.variant_start_hint');
+  });
 
   section.appendChild(select);
   section.appendChild(hint);
@@ -330,6 +338,18 @@ function onVariantChosen(value: string): void {
     window.localStorage.setItem(STORAGE_KEY, value);
   } catch {
     // localStorage may be unavailable; the navigation still drives the switch.
+  }
+
+  // An open setup panel is a draft. Its existing Start action owns creation,
+  // including every advanced value already selected in that form.
+  if (document.getElementById('lobby-panel')?.classList.contains('lobby-open')) {
+    const radios = document.querySelectorAll<HTMLInputElement>('input[name="lobby-variant"]');
+    let chosen: HTMLInputElement | null = null;
+    for (const radio of radios) {
+      radio.checked = radio.value === value;
+      if (radio.checked) chosen = radio;
+    }
+    if (chosen) { chosen.dispatchEvent(new Event('change', { bubbles: true })); return; }
   }
 
   const target = computeVariantNavigation(window.location.href, value);

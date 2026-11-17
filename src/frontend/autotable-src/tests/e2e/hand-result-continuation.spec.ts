@@ -8,6 +8,7 @@ import {
 import type { HandResultEntry } from '../../src/types';
 import { mobileGeometry } from './_mobile-geometry';
 import { assertResultTileArtwork, captureResultTileArtwork } from './_result-tile-artwork';
+import { expandLobbyAdvanced } from './_helpers';
 
 type Frame = { type?: string; full?: boolean; entries?: Array<[string, string | number, Record<string, unknown> | null]> };
 
@@ -114,8 +115,8 @@ async function stalledHandEvidence(actors: Actor[]): Promise<unknown> {
 }
 
 async function configure(actor: Actor, hands: 1 | 4, seed: number): Promise<void> {
+  await expandLobbyAdvanced(actor.page);
   await actor.page.locator(`#lobby-hand-count-fieldset label:has(input[value="${hands}"])`).click();
-  await actor.page.locator('#lobby-advanced summary').click();
   await actor.page.locator('#lobby-seed').fill(String(seed));
 }
 
