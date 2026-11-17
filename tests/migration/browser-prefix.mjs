@@ -67,7 +67,7 @@ async function saveInputTrace(stage) {
     apiSourceSha: receipt.apiSourceSha, applicationManifestSha256: receipt.applicationManifestSha256,
     probeSourceSha: receipt.probeSourceSha, probeFiles: receipt.probeFiles,
     qualification: receipt.qualification, prefix, stage,
-    requestedGesture: { kind: 'page.mouse.dblclick', delay: 20 },
+    requestedGesture: { kind: 'page.mouse.dblclick', delay: 0 },
     rawDiscardCount: receipt.sent.flatMap(message => message.entries ?? []).filter(entry => entry[0] === 'discard').length,
     ...trace }, null, 2) + '\n';
   fs.writeFileSync(path.join(root, file), content);
@@ -141,11 +141,12 @@ try {
   const box = await page.locator('#webgl-canvas').boundingBox();
   const targetPoint = { x: box.x + tile.x, y: box.y + tile.y };
   assert.equal(await page.evaluate(({ x, y }) => {
-    window.__runtimeInputTrace.mark('dblclick-request', { x, y, delay: 20 });
+    window.__runtimeInputTrace.mark('dblclick-request', { x, y, delay: 0 });
     return document.elementFromPoint(x, y)?.id;
   }, targetPoint), 'webgl-canvas');
   const before = receipt.sent.flatMap(message => message.entries ?? []).filter(entry => entry[0] === 'discard').length;
-  await page.mouse.dblclick(targetPoint.x, targetPoint.y, { delay: 20 });
+  // An explicit delay serializes protocol round trips and can exceed the native double-click guard under CI load.
+  await page.mouse.dblclick(targetPoint.x, targetPoint.y);
   await page.waitForFunction(id => !window.game.adapter.latest.localHand.entityIds.includes(id), tile.id);
   await page.waitForTimeout(150);
   assert.equal(receipt.sent.flatMap(message => message.entries ?? []).filter(entry => entry[0] === 'discard').length, before + 1);

@@ -118,6 +118,17 @@ test('trace separates queued processing age from the corrected native double-cli
   assert.equal(before.event.eventTimeStamp - before.state.click.at, 40);
   assert.equal(before.state.contactEntity.interaction.canDiscard, true);
   assert.equal(f.input.click, null, 'the real input consumes the valid native double-click exactly once');
+
+  const slowDispatch = fixture();
+  slowDispatch.pointer('pointerdown', 4376.1, 4255.5);
+  slowDispatch.pointer('pointerup', 4535.8, 4491.9);
+  slowDispatch.pointer('pointerdown', 4865.3, 4862.8);
+  slowDispatch.pointer('pointerup', 5089.9, 4994.9);
+  assert.equal(slowDispatch.intents.filter(value => value.kind === 'discard').length, 0,
+    'The captured CI native releases were 503ms apart, not a valid rapid double-click; preserve the real 400ms guard');
+  const releases = slowDispatch.trace().records.filter(value => value.kind === 'native:before' && value.event.type === 'pointerup');
+  assert.equal(releases[1].event.eventTimeStamp - releases[0].event.eventTimeStamp, 503);
+  assert.equal(slowDispatch.input.click.at, 4994.9, 'a stale pair must remain two ordinary local selections');
 });
 
 test('trace retains the cancellation call chain and rejected reason instead of attributing every loss to timing', () => {
