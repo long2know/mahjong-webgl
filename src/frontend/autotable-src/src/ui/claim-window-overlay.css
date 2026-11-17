@@ -262,6 +262,43 @@
 
 /* Urgency states ------------------------------------------------------- */
 
+#claim-window-actions { grid-template-columns: 48px minmax(0, 1fr) 48px; gap: 8px; padding: 10px; align-items: start; }
+#claim-window-actions .ferro-claim-tile { min-width: 0; gap: 6px; }
+#claim-window-actions .ferro-claim-tile-face {
+    width: auto; height: auto; line-height: normal; border-radius: 0; background: none; box-shadow: none;
+}
+#claim-window-actions .claim-offered-face { --tile-face-width: 42px; }
+#claim-window-actions .ferro-claim-tile-source { font: 600 10px/1.2 system-ui, sans-serif; letter-spacing: normal; text-transform: none; text-align: center; overflow-wrap: anywhere; }
+#claim-window-actions .ferro-claim-center { padding: 0; gap: 5px; }
+#claim-window-actions .ferro-claim-header { position: static; transform: none; gap: 4px; }
+#claim-window-actions .ferro-claim-title,
+#claim-window-actions .ferro-claim-hint {
+    position: static; width: auto; height: auto; clip-path: none; overflow: visible; white-space: normal;
+}
+#claim-window-actions .ferro-claim-title { font-size: 11px; }
+#claim-window-actions .ferro-claim-timer { font-size: 14px; line-height: 1.1; }
+#claim-window-actions .ferro-claim-badge-py { line-height: 1.1; }
+#claim-window-actions .ferro-claim-badge-preview { display: block; line-height: 0; }
+#claim-window-actions .ferro-claim-hint { font-size: 9px; line-height: 1.25; }
+#claim-window-actions .ferro-claim-progress { position: static; width: 100%; height: 3px; }
+#claim-window-actions .ferro-claim-badges { display: grid; grid-template-columns: repeat(auto-fit, minmax(76px, 1fr)); gap: 5px; overflow: visible; margin: 0; }
+#claim-window-actions .ferro-claim-badge { min-width: 0; min-height: 72px; padding: 4px; flex-basis: auto; }
+#claim-window-actions .ferro-claim-badge[hidden] { display: none; }
+#claim-window-actions .ferro-claim-badge-zh { font-size: 15px; }
+#claim-window-actions .ferro-claim-badge-key { position: absolute; width: auto; height: auto; clip-path: none; }
+#claim-window-actions .ferro-claim-pass-wrap { grid-column: auto; grid-row: auto; }
+#claim-window-actions .ferro-claim-pass { min-width: 44px; width: 48px; min-height: 48px; padding: 5px 2px; }
+#claim-window-actions .ferro-claim-choice-note { font-size: 9px; line-height: 1.2; }
+#claim-window-actions .ferro-claim-badge-kong .claim-tile-preview { --tile-face-width: 16px; }
+@media (max-height: 520px) and (min-width: 601px) {
+    #browser-shell .browser-panels:has(#claim-window-actions:not([hidden])) { width: min(720px, calc(100vw - 16px)); }
+    #browser-shell .browser-panels:has(#claim-window-actions:not([hidden])) #chat-panel:not(.chat-panel-collapsed),
+    #browser-shell .browser-panels:has(#claim-window-actions:not([hidden])) #move-log { width: min(320px, 100%); align-self: flex-end; }
+    #claim-window-actions .ferro-claim-badges { grid-template-columns: repeat(auto-fit, minmax(90px, 1fr)); }
+    #claim-window-actions .claim-tile-preview { --tile-face-width: 20px; }
+    #claim-window-actions .ferro-claim-badge-kong .claim-tile-preview { --tile-face-width: 20px; }
+}
+
 .ferro-claim-urgent .ferro-claim-progress-fill {
     background: linear-gradient(90deg, #ffd06b 0%, #ff8a3a 100%);
 }

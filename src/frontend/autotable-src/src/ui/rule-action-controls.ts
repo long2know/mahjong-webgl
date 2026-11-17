@@ -82,7 +82,7 @@ export class RuleActionControls {
     this.recoveryTitle = document.getElementById('rule-action-recovery-title')!;
     this.recoveryMessage = document.getElementById('rule-action-recovery-message')!;
     this.reload = document.getElementById('rule-action-reload') as HTMLButtonElement;
-    this.chooser = new RuleActionChoice();
+    this.chooser = new RuleActionChoice(client);
     this.hu.onclick = () => this.requestOwn('hu');
     this.concealed.onclick = () => this.requestOwn('concealedKong');
     this.added.onclick = () => this.requestOwn('addedKong');
@@ -461,6 +461,8 @@ export class RuleActionControls {
         ? [...tileIds, claimedTile].sort((a, b) => a - b) : tileIds;
       return {
         tileIds,
+        shownTileIds: shownTiles,
+        discardedTileId: kind === 'chow' ? claimedTile : undefined,
         label: () => kind === 'chow'
           ? t('actions.chow_option', { tiles: shownTiles.map(physicalTileLabel).join(' + ') })
           : t('actions.kong_option', {

@@ -1,5 +1,9 @@
 import type { Entity } from './renderer-contract';
 
+export const TABLE_FELT_Y = -.001;
+export const TABLE_RIVER_Y = TABLE_FELT_Y + .0001;
+export const TABLE_SHADOW_Y = TABLE_FELT_Y + .0006;
+
 export const TILE_FINISH = {
   ivory: '#f7f3e6', side: '#e9e3d3',
   teal: { top: '#357d87', bottom: '#235f6b', edge: '#487e85' },

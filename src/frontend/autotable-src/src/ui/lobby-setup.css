@@ -1,0 +1,54 @@
+#lobby-panel {
+    max-height: calc(100dvh - 24px - var(--game-viewport-top, 0px) - var(--game-viewport-bottom, 0px));
+    overscroll-behavior: contain;
+}
+#lobby-panel .lobby-setup-common { margin-top: 12px; }
+#lobby-panel .lobby-setup-common > .lobby-hint { display: block; margin-left: 0; line-height: 1.4; }
+#lobby-panel #lobby-bot-count-fieldset {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 4px;
+    padding: 6px;
+}
+#lobby-panel #lobby-bot-count-fieldset label {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    min-height: 44px;
+    margin: 0;
+    padding: 5px;
+    border: 1px solid #6b8f8366;
+    border-radius: 6px;
+    font: 500 12px/1.2 system-ui, sans-serif;
+}
+#lobby-panel #lobby-bot-count-fieldset label:last-child { grid-column: span 2; }
+#lobby-panel #lobby-bot-count-fieldset input { flex: 0 0 auto; margin: 0; }
+#lobby-panel #lobby-bot-count-fieldset label:has(input:checked) { border-color: #65bca0; background: #368f6e2b; }
+#lobby-panel #lobby-bot-count-fieldset label:has(input:disabled) { opacity: .5; cursor: not-allowed; }
+#lobby-panel .lobby-advanced { padding: 0 10px 6px; }
+#lobby-panel .lobby-advanced > summary {
+    min-height: 44px;
+    padding: 10px 0;
+    font: 600 14px/1.4 system-ui, sans-serif;
+    text-transform: none;
+    letter-spacing: normal;
+}
+#lobby-panel .lobby-advanced > summary:focus-visible { outline: 3px solid #6cc3d4; outline-offset: 3px; border-radius: 4px; }
+#lobby-panel .lobby-advanced-summary {
+    display: block;
+    margin-top: 3px;
+    opacity: .8;
+    font-size: 11px;
+    font-weight: 400;
+}
+#lobby-panel .lobby-advanced-body { padding-top: 8px; }
+#lobby-panel .lobby-advanced-body > .lobby-save-defaults { display: flex; align-items: center; gap: 8px; min-height: 44px; margin: 8px 0; }
+#lobby-panel .lobby-advanced-body > #lobby-quick-match { width: 100%; min-height: 44px; white-space: normal; }
+#lobby-panel .lobby-footer {
+    position: sticky;
+    bottom: 0;
+    z-index: 2;
+    background: #182b29;
+}
+#lobby-panel #lobby-apply { width: 100%; min-height: 48px; font-size: 15px; }
+body.theme-light #lobby-panel .lobby-footer { background: #f2f6f2; }

@@ -262,8 +262,8 @@ void main() {
   float square = highlight*highlight, fourth = square*square, eighth = fourth*fourth;
   float sixteenth = eighth*eighth;
   float edge = 1.0-max(0.0,dot(normal,view));
-  v_lighting = vec2(0.75+0.25*max(0.0,dot(normal,light)),
-    0.065*sixteenth*sixteenth*fourth+0.012*edge*edge*edge*edge);
+  v_lighting = vec2(0.62+0.36*max(0.0,dot(normal,light)),
+    0.045*sixteenth*sixteenth*fourth+0.012*edge*edge*edge*edge);
   v_tileId = a_tileId;
 }
 `;

@@ -25,15 +25,41 @@ test('PR source workflow runs exact WebGL-only source groups without licensed/pr
     assert.equal(upload.with['if-no-files-found'], 'error');
     assert.deepEqual(upload.with.path.trim().split('\n'), description.evidencePaths[group]);
   }
+  const backend = description.plans.backend.find(item => item.name === 'backend-tests');
+  const selectors = backend.argv[backend.argv.indexOf('--filter') + 1].split('|');
+  assert(selectors.includes('FullyQualifiedName~.Changsha.BotPacingTests'),
+    'Canonical backend CI must execute the real bot pacing regression class');
+  assert(selectors.includes('FullyQualifiedName~.Autotable.ClaimWindowTimingTests'),
+    'Canonical backend CI must execute the real public-deadline and late-human-claim regressions');
+  for (const selector of ['.Autotable.BotDisplayNameTests', '.Autotable.HandResultGroupingTests']) {
+    assert(selectors.includes(`FullyQualifiedName~${selector}`),
+      `Canonical backend CI must execute the actual display-name/grouped-result class: ${selector}`);
+  }
+  assert.equal(new Set(selectors).size, selectors.length);
+  assert.equal(backend.expected, 239, 'Retain 206 existing, eleven pacing, four claim timing, and eighteen names/grouping cases');
+  const contracts = description.plans['frontend-source'].find(item => item.name === 'workflow-contracts');
+  assert(contracts.argv.includes('tests/migration/browser-ux.test.mjs'),
+    'Browser harness navigation guards must run in canonical source CI');
+  assert.equal(contracts.expected, 6);
 });
 
 test('frontend inventory retains authority/input/layout/privacy callers and actual default graph checks', () => {
   const tests = description.plans['frontend-source'].find(item => item.name === 'frontend-tests');
-  for (const name of ['renderer-actions', 'renderer-frame', 'renderer-camera-controls', 'webgl-style', 'webgl-build', 'webgl-renderer']) {
+  for (const name of ['renderer-actions', 'renderer-frame', 'renderer-camera-controls', 'webgl-style', 'webgl-build', 'webgl-renderer', 'webgl-table-layout']) {
     assert(tests.argv.includes(`tests/node/${name}.test.mjs`));
   }
+  assert(tests.argv.includes('tests/node/lobby-setup.test.mjs'),
+    'The newly named setup regression file is not selected by renderer/webgl globs');
+  assert(tests.argv.includes('tests/node/webgl-meld-callout.test.mjs'),
+    'Canonical frontend CI must include the actual typed-callout/claim-clock regressions');
+  for (const name of ['browser-tile-ui', 'browser-webgl-lifecycle', 'tile-ui', 'move-log-tile']) {
+    assert(tests.argv.includes(`tests/node/${name}.test.mjs`),
+      `Canonical frontend CI must explicitly execute the new UI/pixel regression: ${name}`);
+  }
+  assert(!tests.argv.includes('tests/node/tile-ui-test-support.mjs'),
+    'Fixture support is not a standalone test inventory entry');
   assert.equal(new Set(tests.argv).size, tests.argv.length);
-  assert.equal(tests.expected, 147);
+  assert.equal(tests.expected, 199);
   const commands = JSON.stringify(description.plans);
   assert.doesNotMatch(commands, /UNITY_LICENSE|unity-webgl|verify-unity|build_unity|baseline-fetch/);
 });

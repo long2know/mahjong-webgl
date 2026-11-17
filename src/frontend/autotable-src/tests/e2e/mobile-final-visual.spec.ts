@@ -3,6 +3,7 @@ import { mkdirSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { newActor, applyRoom, closeLobby, dismissPrompts, probe, type Actor } from './_lobby-repair';
 import { mobileGeometry, setHandOrder, waitForBoardHand, type GeometryReport } from './_mobile-geometry';
+import { expandLobbyAdvanced } from './_helpers';
 
 type Rect = { left: number; top: number; right: number; bottom: number };
 const overlaps = (a: Rect, b: Rect): boolean =>
@@ -138,8 +139,8 @@ test('final integrated visual gate: real draw, meld, both sorts, enabled panels,
   const context = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, deviceScaleFactor: 1 });
   try {
     const actor = await newActor(browser, baseURL, testInfo, 'final-visual', context);
+    await expandLobbyAdvanced(actor.page);
     await actor.page.locator('#lobby-hand-count-fieldset label:has(input[value="1"])').click();
-    await actor.page.locator('#lobby-advanced summary').click();
     await actor.page.locator('#lobby-seed').fill('4100');
     await applyRoom(actor, 3, 0, 'auto');
     await closeLobby(actor);

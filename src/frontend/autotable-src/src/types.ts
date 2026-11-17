@@ -193,7 +193,7 @@ export interface ClaimWindowEntry {
   // Names the server pushes; render in 中文 primary + pinyin sublabel per
   // Default #5 (Vasquez Q5).
   available: Array<'Pung' | 'Chow' | 'Kong' | 'Hu'>;
-  // Epoch ms when the claim window closes. Client auto-passes on expiry.
+  // Authoritative expiry in epoch ms; zero omits the local countdown.
   deadline: number;
   // Discarding seat (0..3).
   source: number;
@@ -265,8 +265,15 @@ export interface HandResultEntry {
   type: 'Hu' | 'Draw' | 'ZhaHu';
   score: Array<ScoreDelta>;
   hand: Array<number>;
+  handGroups?: HandResultGroup[];
   nextBanker: number;
   continuation?: HandResultContinuation | null;
+}
+
+export interface HandResultGroup {
+  kind: 'chow' | 'pung' | 'pair' | 'concealedKong' | 'exposedKong' | 'addedKong' | 'special';
+  tileIds: number[];
+  exposed: boolean;
 }
 
 export interface HandResultAckCommand {

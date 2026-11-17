@@ -23,6 +23,13 @@ import type { Page } from '@playwright/test';
 
 const NAV_RACE = /navigating and changing the content/i;
 
+export async function expandLobbyAdvanced(page: Page): Promise<void> {
+  const advanced = page.locator('#lobby-advanced');
+  if (!await advanced.evaluate((details: HTMLDetailsElement) => details.open)) {
+    await page.locator('#lobby-advanced > summary').click();
+  }
+}
+
 /**
  * Retrieve `page.content()` robustly across in-flight navigations.
  *

@@ -27,7 +27,8 @@ BACKEND_SELECTORS = (
     ".Phase_K_W9.Bishop.LivestreamPathAliasTests",
     ".Phase_K_W9.Vasquez.BishopW9LivestreamPathCanonTests",
     ".Phase_K_W8.Vasquez.BishopW8LivestreamAuthGateTests",
-    ".Chat.TableInvitationTests",
+    ".Chat.TableInvitationTests", ".Changsha.BotPacingTests", ".Autotable.ClaimWindowTimingTests",
+    ".Autotable.BotDisplayNameTests", ".Autotable.HandResultGroupingTests",
 )
 
 
@@ -39,6 +40,9 @@ def plans():
     tests = ["tests/node/room-startup-readiness.test.mjs", "tests/node/hand-result-render-and-wire.test.mjs",
              "tests/node/sc2-slot-owner.invariants.test.mjs", "tests/node/perspective-settings.test.mjs",
              "tests/node/browser-shell-layout.test.mjs", "tests/node/app-url.test.mjs",
+             "tests/node/lobby-setup.test.mjs",
+             "tests/node/browser-tile-ui.test.mjs", "tests/node/browser-webgl-lifecycle.test.mjs",
+             "tests/node/tile-ui.test.mjs", "tests/node/move-log-tile.test.mjs",
              *sorted(path.relative_to(ROOT / FRONTEND).as_posix()
                      for pattern in ("renderer-*.test.mjs", "webgl-*.test.mjs")
                      for path in (ROOT / FRONTEND / "tests/node").glob(pattern)),
@@ -56,16 +60,16 @@ def plans():
                     "-p:UseSharedCompilation=false", "--filter",
                     "|".join("FullyQualifiedName~" + selector for selector in BACKEND_SELECTORS),
                     "--logger", "trx;LogFileName=backend.trx", "--results-directory", RESULTS + "/backend"],
-                    kind="trx", expected=206),
+                    kind="trx", expected=239),
             command("api-publish", ["dotnet", "publish", "src/backend/src/Mahjong.Autotable.Api/Mahjong.Autotable.Api.csproj",
                     "--no-restore", "--disable-build-servers", "-p:UseSharedCompilation=false", "-p:UseAppHost=false",
                     "-c", "Release", "-o", "artifacts/web-source-api"], kind="publish"),
         ],
         "frontend-source": [
             command("dependencies", ["npm", "ci", "--no-audit", "--no-fund"], cwd=FRONTEND, dependency=True),
-            command("workflow-contracts", ["node", "--test", "--test-reporter=tap", "tests/migration/source-ci.test.mjs"],
-                    kind="node", expected=4),
-            command("frontend-tests", ["node", "--test", "--test-reporter=tap", *tests], cwd=FRONTEND,                                                 kind="node", expected=147),
+            command("workflow-contracts", ["node", "--test", "--test-reporter=tap", "tests/migration/source-ci.test.mjs",
+                    "tests/migration/browser-ux.test.mjs"], kind="node", expected=6),
+            command("frontend-tests", ["node", "--test", "--test-reporter=tap", *tests], cwd=FRONTEND,                                                 kind="node", expected=199),
             command("renderer-regressions", ["node", "--test", "--test-reporter=tap",
                     "tests/migration/renderer-backend-shape.test.mjs", "tests/migration/relay-authority-delta.test.mjs"],
                     kind="node", expected=6),

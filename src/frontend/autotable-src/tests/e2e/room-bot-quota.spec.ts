@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test';
+import { expandLobbyAdvanced } from './_helpers';
 import {
   type Actor, newActor, newActors, applyRoom, metadata, probe, copyJoinLink, followJoinLink,
   waitForSeat, driveManualCeremony, discardThroughPointer, saveAndClose,
@@ -49,6 +50,7 @@ test('Quick Match deliberately chooses three Medium bots and supports a real man
   try {
     const owner = await newActor(browser, baseURL, testInfo, 'quick-match-owner');
     actors.push(owner);
+    await expandLobbyAdvanced(owner.page);
     await owner.page.locator('input[name="lobby-bot-count"][value="0"]').check();
     await owner.page.locator('input[name="lobby-bot-difficulty"][value="Hard"]').check();
     await owner.page.locator('input[name="lobby-deal-mode"][value="manual"]').check();

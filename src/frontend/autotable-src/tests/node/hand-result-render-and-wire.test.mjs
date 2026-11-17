@@ -6,6 +6,8 @@ import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 import { runInNewContext } from 'node:vm';
 import { EventEmitter } from 'node:events';
+import { sourceLoader } from './renderer-test-support.mjs';
+import { TileElement } from './tile-ui-test-support.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 const require = createRequire(path.join(root, 'package.json'));
@@ -14,17 +16,7 @@ const javascript = source => ts.transpileModule(source, {
   compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
 }).outputText;
 
-class Element {
-  textContent = '';
-  style = {};
-  children = [];
-  dataset = {};
-  attributes = {};
-  hidden = false;
-  setAttribute(name, value) { this.attributes[name] = value; }
-  set innerHTML(value) { this.children = []; this.textContent = value; }
-  appendChild(child) { this.children.push(child); }
-}
+const Element = TileElement;
 
 const guiSource = ts.createSourceFile('game-ui.ts', fs.readFileSync(path.join(root, 'src/game-ui.ts'), 'utf8'), ts.ScriptTarget.Latest, true);
 const gui = guiSource.statements.find(s => ts.isClassDeclaration(s) && s.name?.text === 'GameUi');
@@ -36,12 +28,17 @@ const renderSource = [renderer, handRenderer, readiness].map(method =>
 const nodes = new Map();
 const en = JSON.parse(fs.readFileSync(path.join(root, 'src/i18n/en.json')));
 function fixtureClass(catalog = en, warnings = []) {
+  const document = { createElement: tag => new Element(tag), getElementById: id => nodes.get(id) ?? null };
+  const translate = (key, params = {}) => (catalog[key] ?? key).replace(/\{(\w+)\}/g, (whole, name) => String(params[name] ?? whole));
+  const loader = sourceLoader({ document, console: { warn: message => warnings.push(message) } }, {
+    'i18n.ts': { t: translate },
+  });
   return runInNewContext(javascript('class RenderFixture {' + renderSource + '}\nRenderFixture;'), {
-    document: { createElement: () => new Element(), getElementById: id => nodes.get(id) ?? null },
-    t: (key, params = {}) => (catalog[key] ?? key).replace(/\{(\w+)\}/g, (whole, name) => String(params[name] ?? whole)),
+    document, t: translate, renderResultTiles: loader.load('ui/result-hand.ts').renderResultTiles,
     console: { warn: message => warnings.push(message) },
   });
 }
+const resultTiles = ui => ui.elements.resultHand.querySelectorAll('.result-tile');
 const RenderFixture = fixtureClass();
 
 function resultUi(catalog = en, warnings = []) {
@@ -127,22 +124,23 @@ for (const [description, type, winner, expected] of [
   });
 }
 
-  test('actual result renderer maps all 108 physical IDs to original DOM label cards and localized face names', () => {
+  test('actual result renderer maps all 108 physical IDs to licensed atlas images and localized face names', () => {
     const ui = resultUi();
     const hand = Object.freeze(Array.from({ length: 108 }, (_, id) => id));
     ui.renderResult({ type: 'Hu', winner: 0, score: [], hand, nextBanker: 0 });
-    assert.equal(ui.elements.resultHand.children.length, 108);
+    assert.equal(resultTiles(ui).length, 108);
     for (let face = 0; face < 27; face++) {
       for (let copy = 0; copy < 4; copy++) {
         const id = face * 4 + copy;
-        const cell = ui.elements.resultHand.children[id];
+        const cell = resultTiles(ui)[id];
         const label = `${face % 9 + 1} ${['characters', 'circles', 'bamboo'][Math.floor(face / 9)]}`;
         assert.equal(cell.dataset.tileId, String(id));
         assert.equal(cell.dataset.face, String(face));
         assert.equal(cell.attributes.role, 'img');
         assert.equal(cell.attributes['aria-label'], label);
         assert.equal(cell.title, label);
-        assert.equal(cell.textContent, label, 'original label art must remain readable without an inherited atlas');
+        assert.equal(cell.textContent, label, 'friendly fallback remains readable before artwork loads');
+        assert.match(cell.querySelector('img').src, /FacesLabelled\.png$/);
         assert.equal(cell.style.backgroundPosition, undefined);
         assert.equal(cell.attributes.tabindex, undefined);
         assert.equal(cell.onclick, undefined);
@@ -156,10 +154,10 @@ for (const [description, type, winner, expected] of [
     const result = Object.freeze({ type: 'Hu', winner: 2, score: [], hand, nextBanker: 2 });
     ui.renderResult(result);
     const expected = hand.map(String);
-    assert.deepEqual(ui.elements.resultHand.children.map(cell => cell.dataset.tileId), expected);
+    assert.deepEqual(resultTiles(ui).map(cell => cell.dataset.tileId), expected);
     ui.renderResult(result);
-    assert.deepEqual(ui.elements.resultHand.children.map(cell => cell.dataset.tileId), expected);
-    assert.equal(ui.elements.resultHand.children.length, 15);
+    assert.deepEqual(resultTiles(ui).map(cell => cell.dataset.tileId), expected);
+    assert.equal(resultTiles(ui).length, 15);
   });
 
   test('invalid physical IDs and opaque handles remain unknown instead of wrapping or exposing an invented face', () => {
@@ -167,9 +165,9 @@ for (const [description, type, winner, expected] of [
     const ui = resultUi(en, warnings);
     const invalid = [-1, 108, 135, 1000, 0.5, NaN, Infinity, -Infinity, '0', 'h_opaque', null, undefined, {}];
     ui.renderResult({ type: 'Hu', winner: 0, score: [], hand: [...invalid, 107], nextBanker: 0 });
-    assert.equal(ui.elements.resultHand.children.length, invalid.length + 1);
-    for (const cell of ui.elements.resultHand.children.slice(0, -1)) {
-      assert.equal(cell.className, 'result-tile result-tile-unknown');
+    assert.equal(resultTiles(ui).length, invalid.length + 1);
+    for (const cell of resultTiles(ui).slice(0, -1)) {
+      assert(cell.classList.contains('result-tile-unknown'));
       assert.equal(cell.textContent, '?');
       assert.equal(cell.attributes['aria-label'], 'Unknown tile');
       assert.equal(cell.dataset.face, undefined);
@@ -177,7 +175,7 @@ for (const [description, type, winner, expected] of [
       assert.equal(cell.style.backgroundPosition, undefined);
     }
     assert.equal(warnings.length, invalid.length);
-    assert.equal(ui.elements.resultHand.children.at(-1).attributes['aria-label'], '9 bamboo');
+    assert.equal(resultTiles(ui).at(-1).attributes['aria-label'], '9 bamboo');
   });
 
   for (const [locale, expected] of [
@@ -189,7 +187,7 @@ for (const [description, type, winner, expected] of [
       const catalog = JSON.parse(fs.readFileSync(path.join(root, `src/i18n/${locale}.json`)));
       const ui = resultUi(catalog);
       ui.renderResult({ type: 'Hu', winner: 0, score: [], hand: [0, 35, 36, 71, 72, 107], nextBanker: 0 });
-      assert.deepEqual(ui.elements.resultHand.children.map(cell => cell.attributes['aria-label']), expected);
+      assert.deepEqual(resultTiles(ui).map(cell => cell.attributes['aria-label']), expected);
     });
   }
 
@@ -198,7 +196,7 @@ for (const [description, type, winner, expected] of [
     const score = Object.freeze([Object.freeze({ seat: 0, delta: 8 })]);
     for (const type of ['Hu', 'Draw', 'ZhaHu']) {
       ui.renderResult({ type: 'Hu', winner: 0, score, hand: [0, 36, 72], nextBanker: 0 });
-      assert.equal(ui.elements.resultHand.children.length, 3);
+      assert.equal(resultTiles(ui).length, 3);
       ui.renderResult({ type, winner: type === 'Draw' ? -1 : 0, score, hand: [], nextBanker: 0 });
       assert.equal(ui.elements.resultHand.children.length, 0);
       assert.equal(ui.elements.resultScoreBody.children[0].children[2].textContent, '+8');
@@ -262,6 +260,23 @@ test('actual Client collection emits only the frozen UPDATE/handResultAck envelo
   const command = { gameId: 'canonical-runtime-guid', handNumber: 1, resultToken: 'opaque-token' };
   h.client.handResultAck.set('current', command);
   assert.deepEqual(socket.sent.at(-1), { type: 'UPDATE', entries: [['handResultAck', 'current', command]], full: false });
+});
+
+test('actual GameUi passes authoritative ordered groups and the supplied physical winning tile into the graphical result hand', () => {
+  const ui = resultUi();
+  const groups = [
+    { kind: 'pung', tileIds: [76, 77, 78], exposed: true },
+    { kind: 'chow', tileIds: [52, 56, 60], exposed: false },
+    { kind: 'chow', tileIds: [8, 12, 16], exposed: false },
+    { kind: 'chow', tileIds: [20, 24, 28], exposed: false },
+    { kind: 'pair', tileIds: [4, 5], exposed: false },
+  ];
+  ui.renderResult({ type: 'Hu', winner: 1, score: [], nextBanker: 1,
+    hand: groups.flatMap(group => group.tileIds), handGroups: groups, winResult: { winningTileId: 5 } });
+  assert.deepEqual(ui.elements.resultHand.querySelectorAll('.result-tile-group').map(section => section.dataset.kind),
+    ['pung', 'chow', 'chow', 'chow', 'pair']);
+  assert.equal(resultTiles(ui).length, 14);
+  assert.equal(ui.elements.resultHand.querySelector('[data-winning="true"]').dataset.tileId, '5');
 });
 
 test('actual Client reconnect and full snapshots never replay or invent an acknowledgement', () => {

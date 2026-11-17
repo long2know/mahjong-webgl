@@ -5,6 +5,7 @@ import type { Camera, InstancedMesh, Mesh, Vector3 } from 'three';
 import type { World } from '../../src/world';
 import { newActor, applyRoom, closeLobby, probe } from './_lobby-repair';
 import { mobileGeometry, setHandOrder, waitForBoardHand } from './_mobile-geometry';
+import { expandLobbyAdvanced } from './_helpers';
 
 interface Rect { left: number; top: number; right: number; bottom: number }
 interface MotionFrame {
@@ -97,8 +98,8 @@ for (const viewport of [
     try {
       const actor = await newActor(browser, baseURL, info, 'stable-socket-view', context);
       const page = actor.page;
+      await expandLobbyAdvanced(page);
       await page.locator('#lobby-hand-count-fieldset label:has(input[value="1"])').click();
-      await page.locator('#lobby-advanced summary').click();
       await page.locator('#lobby-seed').fill('4100');
       await applyRoom(actor, 3, 0, 'auto');
       await closeLobby(actor);
@@ -191,8 +192,8 @@ for (const viewport of [
     try {
       const actor = await newActor(browser, baseURL, info, 'stable-live-table', context);
       const page = actor.page;
+      await expandLobbyAdvanced(page);
       await page.locator('#lobby-hand-count-fieldset label:has(input[value="4"])').click();
-      await page.locator('#lobby-advanced summary').click();
       await page.locator('#lobby-seed').fill('4100');
       await applyRoom(actor, 3, 0, 'auto');
       await closeLobby(actor);

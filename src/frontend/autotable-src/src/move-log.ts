@@ -26,7 +26,7 @@
 
 import { Client } from "./client";
 import { comparePatterns } from "./pattern-utils";
-import { parseRealTileId as changshaParseRealTileId, formatBreakPointLabel } from "./changsha-mode-policy";
+import { parseRealTileId as changshaParseRealTileId, resolveTileFace, formatBreakPointLabel } from "./changsha-mode-policy";
 import {
   ClaimWindowEntry,
   DiceInfo,
@@ -64,16 +64,21 @@ function shortPatternLabel(p: string): string {
   return PATTERN_LABELS_SHORT[normalizePatternKey(p)] ?? p;
 }
 
-// Tile-id → readable glyph.  Changsha tile-ids 0..26 enumerate three suits
-// (m=characters, p=dots, s=bamboo) of nine ranks; the wider 0..107 deck
-// repeats that 4× per copy, so we modulo by 27 to recover suit+rank.
+// Changsha callers supply normalized logical faces. Keep the historical
+// wrapping for relay callers, whose representation is unchanged here.
 function tileGlyph(tile: number | null | undefined): string {
-  if (tile === null || tile === undefined) return '?';
+  if (typeof tile !== 'number' || !Number.isInteger(tile) || tile < 0) return '?';
   const suits = ['万', '筒', '条'];
   const idx = ((tile % 27) + 27) % 27;
   const suit = suits[Math.floor(idx / 9)];
   const rank = (idx % 9) + 1;
   return `${rank}${suit}`;
+}
+
+function changshaLogFace(key: unknown, face?: number | null): number | null {
+  if (typeof key !== 'number' && typeof key !== 'string') return null;
+  const resolved = resolveTileFace(key, face).faceIndex;
+  return resolved !== null && Number.isInteger(resolved) && resolved >= 0 && resolved < 27 ? resolved : null;
 }
 
 type LogCategory =
@@ -351,13 +356,12 @@ export class MoveLog {
         // ignored by the dedup set.
         if (this.seenDiscardTiles.has(tileIdx)) continue;
         this.seenDiscardTiles.add(tileIdx);
-        // Concealed tiles arrive with face=null from the per-viewer privacy
-        // mask; fall back to tile id so the glyph still resolves.
-        const face = info.face ?? tileIdx;
+        const face = this.client.connectionMode === 'changsha' ? changshaLogFace(tileIdx, info.face)
+          : info.face === null ? null : info.face ?? tileIdx;
         this.push({
           seat,
           action: `discarded ${tileGlyph(face)}`,
-          tile: face,
+          tile: typeof face === 'number' ? face : undefined,
           category: 'discard',
         });
       } else if (slot.startsWith('meld.')) {
@@ -367,11 +371,12 @@ export class MoveLog {
         // first tile per seat per recent burst produces a row; siblings are
         // suppressed by the cluster check below.
         if (this.recentMeldClusterSeat(seat)) continue;
-        const face = info.face ?? tileIdx;
+        const face = this.client.connectionMode === 'changsha' ? changshaLogFace(tileIdx, info.face)
+          : info.face === null ? null : info.face ?? tileIdx;
         this.push({
           seat,
           action: `formed a meld with ${tileGlyph(face)}`,
-          tile: face,
+          tile: typeof face === 'number' ? face : undefined,
           category: 'claim',
         });
       }
@@ -395,13 +400,13 @@ export class MoveLog {
 
       if (Array.isArray(v.available) && v.available.length > 0) {
         const opts = v.available.join('/');
-        const tile = v.tile;
+        const tile = this.client.connectionMode === 'changsha' ? changshaLogFace(v.tile) : v.tile;
         const source = v.source;
         this.push({
           seat,
           action: `claim window — ${opts} on ${tileGlyph(tile)}` +
             (source !== undefined ? ` (from Seat ${source})` : ''),
-          tile,
+          tile: typeof tile === 'number' ? tile : undefined,
           category: 'claim',
         });
       } else if (v.action === 'claim' && v.type) {

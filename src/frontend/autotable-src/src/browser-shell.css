@@ -109,6 +109,7 @@ body.browser-shell-active :is(#settings-drawer, #settings-drawer-v2, #lobby-pane
 body.lobby-active #browser-shell #new-game,
 body.lobby-active #browser-shell #lobby-toggle,
 body.variant-riichi #browser-shell #new-game { display: none; }
+body.lobby-active #browser-shell #table-focus-toggle { display: none; }
 body.lobby-active #browser-shell { z-index: 80; }
 body.lobby-active #browser-shell .browser-toolbar { margin-left: auto; }
 
@@ -295,6 +296,7 @@ body.browser-shell-active.variant-riichi #sidebar {
 }
 
 @media (max-width: 900px), (max-height: 520px) {
+    #browser-shell #table-focus-toggle { display: none; }
     #browser-shell {
         display: grid;
         grid-template-columns: minmax(0, 1fr);
@@ -344,6 +346,9 @@ body.browser-shell-active.variant-riichi #sidebar {
 }
 @media (min-width: 901px) and (min-height: 521px) {
     body.browser-shell-active:not(.variant-riichi) #sidebar { right: 8px; bottom: 8px; }
+    body.browser-shell-active.table-panels-collapsed #bot-banner,
+    body.browser-shell-active.table-panels-collapsed #move-log,
+    body.browser-shell-active.table-panels-collapsed:not(.variant-riichi) #sidebar { display: none !important; }
 }
 @media (max-height: 520px) and (min-width: 601px) {
     #browser-shell { display: flex; gap: 12px; padding-right: max(64px, env(safe-area-inset-right)); }
