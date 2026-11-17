@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
-import { root, require } from './renderer-test-support.mjs';
+import { root, require, changshaTableFixture, plain } from './renderer-test-support.mjs';
 
 const { chromium } = require('@playwright/test');
 const { buildSync } = require('esbuild');
@@ -22,9 +22,13 @@ function productionModules() {
         import * as host from './src/renderer/webgl-host.ts';
         import * as moves from './src/move-log.ts';
         import * as claims from './src/ui/claim-window-overlay.ts';
+        import { tileModel } from './src/renderer/webgl-layout.ts';
+        import { TILE_WIDTH, TILE_HEIGHT, TILE_DEPTH } from './src/renderer/gpu/tile-mesh.ts';
+        import { Matrix4, Vector3 } from 'three';
         window.shellSource = {
           'browser-shell.ts': shell, 'ui/drawer-accessibility.ts': drawers,
           'renderer/webgl-host.ts': host, 'move-log.ts': moves, 'ui/claim-window-overlay.ts': claims,
+          geometry: { tileModel, TILE_WIDTH, TILE_HEIGHT, TILE_DEPTH, Matrix4, Vector3 },
         };
       `,
     },
@@ -38,6 +42,7 @@ const styles = [
   'node_modules/bootstrap/dist/css/bootstrap.css', 'src/style.css', 'src/main.css',
   'src/ui/hicks-mobile-sidebar.css', 'src/browser-shell.css', 'src/mobile-table.css',
   'src/renderer/renderer-host.css', 'src/ui/rule-action-controls.css', 'src/ui/claim-window-overlay.css',
+  'src/renderer/webgl-host.css',
   'src/ui/tile-face.css', 'src/ui/claim-preview.css',
 ].map(file => fs.readFileSync(path.join(root, file), 'utf8')).join('\n');
 
@@ -122,7 +127,7 @@ function assertLayout(result, state, native = false) {
   assert(result.clear.bottom - result.clear.top - result.viewport.handBandCssPx >= 120, `${at}: no clear board above hand`);
 }
 
-async function focusPage(page, bundle, saved = false) {
+async function focusPage(page, bundle, saved = false, fixture = null) {
   await page.route('http://shell-focus.fixture/**', route => {
     const url = new URL(route.request().url()), asset = /^\/art\/tiles\/(Faces(?:Labelled)?\.png)$/.exec(url.pathname);
     if (asset) return route.fulfill({ contentType: 'image/png', body: fs.readFileSync(path.join(root, 'art/tiles', asset[1])) });
@@ -131,7 +136,7 @@ async function focusPage(page, bundle, saved = false) {
   });
   await page.goto('http://shell-focus.fixture/');
   await page.addScriptTag({ content: bundle });
-  await page.evaluate(saved => {
+  await page.evaluate(({ saved, fixture }) => {
     if (saved !== null) localStorage.setItem('mahjong.table.focus.v1', String(saved));
     if (!localStorage.getItem('mahjong.settings.v1')) localStorage.setItem('mahjong.settings.v1',
       JSON.stringify({ boardLayout: 'rectangular', handLayout: 'separate', cameraMode: 'flat', lang: 'en' }));
@@ -143,26 +148,35 @@ async function focusPage(page, bundle, saved = false) {
     document.getElementById('leave-seat').addEventListener('click', () => { window.focusLeaveClicks = (window.focusLeaveClicks ?? 0) + 1; });
     window.shellSource['browser-shell.ts'].installBrowserShell();
     let host = null, layout = null, frameId = 0;
+    const sessionId = fixture?.frame.sessionId ?? 'focus-fixture';
     const publish = () => {
       if (!host || !layout) return;
-      host.publish(layout, {
-        contractVersion: '1.0.0', instanceId: host.instanceId, sessionId: 'focus-fixture',
-        type: 'frame', frameId: ++frameId, layoutRevision: 1,
+      const empty = {
+        contractVersion: '1.0.0', instanceId: host.instanceId, sessionId,
+        type: 'frame', layoutRevision: 1,
         session: { gameId: null, mode: 'offline', connected: false, snapshotReady: false, actorSeat: null, viewSeat: 0, viewerRevision: null },
         presentation: { viewMode: 'flat', boardLayout: 'rectangular', handLayout: 'separate', tileLabels: true, lookDown: 0, zoom: 0 },
         entities: [], seats: [], localHand: { seat: null, entityIds: [], drawnEntityId: null }, turn: null, pickup: null, dice: null, match: null,
-      });
+      };
+      host.publish(layout, { ...(fixture?.frame ?? empty), instanceId: host.instanceId, frameId: ++frameId });
     };
     const { WebglHost } = window.shellSource['renderer/webgl-host.ts'];
     host = new WebglHost(document.getElementById('main'), {
-      action() { throw Error('A panel toggle must not submit gameplay'); }, resized: publish, resumed: publish, failure() {}, notice() {},
+      action(packet) {
+        if (!fixture) throw Error('A panel toggle must not submit gameplay');
+        window.tableInputActions.push({ packet, frameId: host.scene?.committed?.frame.frameId,
+          resizeRevision: host.scene?.committed?.viewport.resizeRevision, viewportRevision: host.viewport.resizeRevision });
+      },
+      resized: publish, resumed: publish, failure() {}, notice() {},
     });
-    host.clear('focus-fixture', 'join');
-    layout = { contractVersion: '1.0.0', instanceId: host.instanceId, sessionId: 'focus-fixture', type: 'layout', layoutRevision: 1,
-      gameType: 'CHANGSHA', activeSeats: [0, 1, 2, 3], canonicalBoard: { width: 174, depth: 174 }, slots: [] };
+    host.clear(sessionId, 'join');
+    layout = fixture ? { ...fixture.layout, instanceId: host.instanceId }
+      : { contractVersion: '1.0.0', instanceId: host.instanceId, sessionId, type: 'layout', layoutRevision: 1,
+        gameType: 'CHANGSHA', activeSeats: [0, 1, 2, 3], canonicalBoard: { width: 174, depth: 174 }, slots: [] };
     window.shellHost = host;
+    window.tableInputActions = []; window.tableFixture = fixture; window.publishTableFixture = publish;
     host.setPresentation({ handLayout: 'separate' }); publish(); void host.mount();
-  }, saved);
+  }, { saved, fixture });
   await focusSettled(page);
 }
 
@@ -496,5 +510,235 @@ test('production shell + WebglHost reserve unobstructed controls, panels and han
       await page.locator('#deal').click();
       assert.equal(await page.evaluate(() => window.focusDealClicks), 1, 'relay manual controls are not auxiliary panels');
     } finally { await page.evaluate(() => window.shellHost?.dispose()); await context.close(); }
+  });
+  await t.test('cohesive source table keeps real mesh/label bounds and correlated pointer input through sidebar, focus and phone reflows', async () => {
+    const source = changshaTableFixture(), fixture = plain({ layout: source.layout, frame: source.frame });
+    source.h.close();
+    fixture.frame.seats.forEach(seat => { seat.nick = `Table player ${seat.seat + 1} with a long nickname`; });
+    const context = await browser.newContext({ viewport: { width: 1791, height: 790 }, reducedMotion: 'reduce' });
+    const page = await context.newPage();
+    try {
+      await focusPage(page, bundle, false, fixture);
+      for (const [name, width, height, focused] of [
+        ['reference-sidebar', 1791, 790, false], ['reference-focused', 1791, 790, true],
+        ['desktop-focused', 1280, 800, true], ['desktop-sidebar', 1280, 800, false],
+        ['landscape', 844, 390, false], ['portrait', 390, 844, false], ['ultrawide', 3440, 1440, true],
+      ]) {
+        await page.setViewportSize({ width, height });
+        if (width > 900) {
+          if (await page.locator('#table-focus-toggle').getAttribute('aria-pressed') !== String(focused))
+            await page.locator('#table-focus-toggle').click();
+        }
+        for (const viewMode of ['flat', 'perspective']) {
+          await page.evaluate(viewMode => {
+            window.tableFixture.frame.presentation.viewMode = viewMode; window.publishTableFixture();
+          }, viewMode);
+          await focusSettled(page);
+          const result = await page.evaluate(() => {
+            const host = window.shellHost, scene = host.scene, { plan, frame, viewport } = scene.committed;
+            const { tileModel, TILE_WIDTH, TILE_HEIGHT, TILE_DEPTH, Matrix4, Vector3 } = window.shellSource.geometry;
+            const bounds = item => {
+              const rect = item.separate ? plan.hand : plan.board;
+              const matrix = new Matrix4().fromArray(scene.picking.matrices[item.separate ? 1 : 0])
+                .multiply(new Matrix4().fromArray(tileModel(item.pose)));
+              const points = [];
+              for (const x of [-TILE_WIDTH / 2, TILE_WIDTH / 2]) for (const y of [-TILE_HEIGHT / 2, TILE_HEIGHT / 2])
+                for (const z of [-TILE_DEPTH / 2, TILE_DEPTH / 2])
+                  points.push(new Vector3(x, y, z).applyMatrix4(matrix));
+              const xs = points.map(point => rect.x + (point.x + 1) * rect.width / 2);
+              const ys = points.map(point => rect.y + (1 - point.y) * rect.height / 2);
+              return { x: Math.min(...xs), y: Math.min(...ys), width: Math.max(...xs) - Math.min(...xs),
+                height: Math.max(...ys) - Math.min(...ys), separate: item.separate };
+            };
+            const tiles = [...plan.entities.values()].map(bounds);
+            const labels = [...document.querySelectorAll('.webgl-seat')].map(node => node.getBoundingClientRect().toJSON());
+            const target = frame.localHand.entityIds[5], point = scene.project(target);
+            window.tableInputActions = [];
+            return { tiles, labels, board: plan.board, hand: plan.hand, target, point,
+              resizeRevision: viewport.resizeRevision, currentRevision: host.viewport.resizeRevision,
+              picked: scene.pick(point.x, point.y), count: plan.entities.size, style: scene.style };
+          });
+          assert.equal(result.resizeRevision, result.currentRevision, `${name}/${viewMode}: a real fence committed this reflow`);
+          assert.equal(result.count, 108);
+          assert.equal(result.labels.length, 4);
+          const inside = (a, b) => a.x >= b.x - 1 && a.y >= b.y - 1
+            && a.x + a.width <= b.x + b.width + 1 && a.y + a.height <= b.y + b.height + 1;
+          const intersect = (a, b) => a.x < b.x + b.width - .1 && a.x + a.width > b.x + .1
+            && a.y < b.y + b.height - .1 && a.y + a.height > b.y + .1;
+          for (const tile of result.tiles)
+            assert(inside(tile, tile.separate ? result.hand : result.board), `${name}/${viewMode}: actual tile corners stay visible`);
+          for (const label of result.labels) {
+            assert(inside(label, result.board), `${name}/${viewMode}: native seat-label bounds stay in the clear board`);
+            const collision = result.tiles.find(tile => intersect(label, tile));
+            assert(!collision, `${name}/${viewMode}: native labels never cover actual tiles: ${JSON.stringify({ label, collision })}`);
+          }
+          assert.deepEqual(result.picked, { kind: 'entity', id: result.target }, `${name}/${viewMode}: committed mesh picking`);
+          assert(result.style.frameDrawCalls <= 2, 'the physical finish stays in the existing board/hand batches');
+          await page.mouse.dblclick(result.point.x, result.point.y, { delay: 30 });
+          const actions = await page.evaluate(() => window.tableInputActions.filter(entry => entry.packet.intent.kind === 'discard'));
+          assert.equal(actions.length, 1, `${name}/${viewMode}: a real double click emits exactly one discard intent`);
+          assert.equal(actions[0].packet.intent.entityId, result.target);
+          assert.equal(actions[0].packet.contextFrameId, actions[0].frameId, 'input names the actual GPU-committed frame');
+          assert.equal(actions[0].resizeRevision, actions[0].viewportRevision, 'input cannot use stale pre-reflow picking');
+          if (process.env.COHESIVE_TABLE_EVIDENCE === '1') {
+            const directory = path.resolve(root, '../../../artifacts/cohesive-table-source');
+            fs.mkdirSync(directory, { recursive: true });
+            await page.screenshot({ path: path.join(directory, `${name}-${viewMode}-fixture.png`) });
+          }
+        }
+      }
+    } finally { await page.evaluate(() => window.shellHost?.dispose()); await context.close(); }
+  });
+  await t.test('painted bot discard onsets and intermediate poses clear the previous native labels before fence receipt on both sides', async () => {
+    for (const seat of [1, 3]) {
+      const source = changshaTableFixture(), fixture = plain({ layout: source.layout, frame: source.frame });
+      source.h.close();
+      const index = fixture.frame.entities.findIndex(entity => entity.group === 'discard' && entity.seat === seat);
+      const discarded = plain(fixture.frame.entities[index]);
+      const count = fixture.frame.entities.filter(entity => entity.group === 'hand' && entity.seat === seat).length;
+      const slot = fixture.layout.slots.find(slot => slot.slotName === `hand.${count}@${seat}`);
+      fixture.frame.entities[index] = {
+        ...plain(discarded), entityId: `entity_${String(seat).repeat(32)}`, group: 'hand',
+        slotName: slot.slotName, indexes: [count], rotationIndex: 2, pose: plain(slot.poses[2]),
+        appearance: { faceIndex: null, knownFace: false, showFace: false, backIndex: 0, valueIndex: null },
+      };
+      fixture.frame.seats.forEach(player => { player.nick = ['Seat 0', 'BambooPanda', 'CloudCrane', 'LotusTiger'][player.seat]; });
+      const context = await browser.newContext({ viewport: { width: 1791, height: 790 }, reducedMotion: 'no-preference' });
+      const page = await context.newPage();
+      try {
+        await focusPage(page, bundle, true, fixture);
+        await page.evaluate(({ index, discarded }) => {
+          const scene = window.shellHost.scene;
+          window.labelPaintClock = { started: performance.now(), elapsed: 0 };
+          Object.defineProperty(performance, 'now', {
+            configurable: true, value: () => window.labelPaintClock.started + window.labelPaintClock.elapsed,
+          });
+          const draw = scene.draw.bind(scene), poll = scene.poll.bind(scene);
+          // Exercise the real GPU/DOM interleaving: the new canvas may paint before poll updates labels.
+          scene.poll = () => window.releaseLabelReceipt ? poll() : null;
+          scene.draw = (...args) => {
+            draw(...args);
+            const commit = scene.pending.commit, item = commit.plan.entities.get(discarded.entityId);
+            const { tileModel, TILE_WIDTH, TILE_HEIGHT, TILE_DEPTH, Matrix4, Vector3 } = window.shellSource.geometry;
+            const camera = new Matrix4().fromArray(scene.matrices[0]), rect = commit.plan.board;
+            const model = camera.clone().multiply(new Matrix4().fromArray(tileModel(item.pose))), points = [];
+            for (const x of [-TILE_WIDTH / 2, TILE_WIDTH / 2]) for (const y of [-TILE_HEIGHT / 2, TILE_HEIGHT / 2])
+              for (const z of [-TILE_DEPTH / 2, TILE_DEPTH / 2]) points.push(new Vector3(x, y, z).applyMatrix4(model));
+            const xs = points.map(point => rect.x + (point.x + 1) * rect.width / 2);
+            const ys = points.map(point => rect.y + (1 - point.y) * rect.height / 2);
+            const width = Math.max(3, Math.floor((Math.max(...xs) - Math.min(...xs)) * .5));
+            const height = Math.max(3, Math.floor((Math.max(...ys) - Math.min(...ys)) * .5));
+            const x = Math.round((Math.min(...xs) + Math.max(...xs) - width) / 2);
+            const y = Math.round((Math.min(...ys) + Math.max(...ys) - height) / 2);
+            const reference = new Uint8Array(width * height * 4);
+            scene.gl.readPixels(x, scene.canvas.height - y - height, width, height,
+              scene.gl.RGBA, scene.gl.UNSIGNED_BYTE, reference);
+            window.labelPaintProbe = {
+              elapsed: window.labelPaintClock.elapsed, frameId: commit.frame.frameId,
+              previousFrameId: scene.committed.frame.frameId, x, y, width, height,
+              reference: Array.from({ length: height }, (_, row) =>
+                [...reference.slice((height - row - 1) * width * 4, (height - row) * width * 4)]).flat(),
+            };
+          };
+          window.tableFixture.frame.entities[index] = discarded;
+        }, { index, discarded });
+        const samples = [];
+        for (const elapsed of [0, 16, 80, 160, 240, 319, 320]) {
+          await page.evaluate(elapsed => {
+            window.labelPaintClock.elapsed = elapsed;
+            window.labelPaintProbe = null; window.releaseLabelReceipt = false;
+            window.publishTableFixture();
+          }, elapsed);
+          await page.waitForFunction(() => window.labelPaintProbe !== null);
+          const screenshot = await page.screenshot();
+          const paint = await page.evaluate(async bytes => {
+            const probe = window.labelPaintProbe, scene = window.shellHost.scene;
+            const image = await createImageBitmap(new Blob([Uint8Array.from(bytes)], { type: 'image/png' }));
+            const canvas = new OffscreenCanvas(image.width, image.height), context = canvas.getContext('2d');
+            context.drawImage(image, 0, 0);
+            const actual = context.getImageData(probe.x, probe.y, probe.width, probe.height).data;
+            let mismatched = 0, light = 0;
+            for (let pixel = 0; pixel < actual.length; pixel += 4) {
+              if (probe.reference[pixel] + probe.reference[pixel + 1] + probe.reference[pixel + 2] > 420) light++;
+              if ([0, 1, 2].some(channel => Math.abs(actual[pixel + channel] - probe.reference[pixel + channel]) > 3)) mismatched++;
+            }
+            return { elapsed: probe.elapsed, frameId: probe.frameId, previousFrameId: probe.previousFrameId,
+              stillUncommitted: scene.committed.frame.frameId === probe.previousFrameId,
+              mismatched, pixels: actual.length / 4, light,
+              visibleLabels: [...scene.labelNodes.values()].filter(node => {
+                const style = getComputedStyle(node), bounds = node.getBoundingClientRect();
+                return !node.hidden && style.visibility !== 'hidden' && style.display !== 'none'
+                  && Number(style.opacity) > 0 && bounds.width > 0 && bounds.height > 0;
+              }).length };
+          }, [...screenshot]);
+          assert(paint.frameId > paint.previousFrameId && paint.stillUncommitted,
+            'the actual PNG must precede the DOM label update, not merely sample corrected post-fence rectangles');
+          assert.equal(paint.visibleLabels, 4, 'all native labels stay visible during the actual paint');
+          assert(paint.light > paint.pixels / 4, 'the GPU reference must contain the genuine light tile face');
+          assert.equal(paint.mismatched, 0,
+            `seat${seat}/${elapsed}ms: painted tile-face pixels differ from the actual GPU beneath old labels: ${JSON.stringify(paint)}`);
+          if (process.env.SEAT_LABEL_PAINT_EVIDENCE === '1' && [0, 160].includes(elapsed)) {
+            const directory = path.resolve(root, '../../../artifacts/ux-seat-label-r3-source');
+            fs.mkdirSync(directory, { recursive: true });
+            fs.writeFileSync(path.join(directory, `bot${seat}-pre-receipt-${elapsed}ms.png`), screenshot);
+          }
+          await page.evaluate(() => { window.releaseLabelReceipt = true; });
+          await page.waitForFunction(() => window.shellHost.scene.committed.frame.frameId === window.labelPaintProbe.frameId
+            && !window.shellHost.inFlight);
+          samples.push(await page.evaluate(discarded => {
+                const host = window.shellHost, scene = host.scene, commit = scene.committed;
+                const { tileModel, TILE_WIDTH, TILE_HEIGHT, TILE_DEPTH, Matrix4, Vector3 } = window.shellSource.geometry;
+                const camera = new Matrix4().fromArray(scene.picking.matrices[0]), rect = commit.plan.board;
+                const centre = pose => {
+                  const point = pose.position.clone(); point.z *= -1; point.applyMatrix4(camera);
+                  return { x: rect.x + (point.x + 1) * rect.width / 2, y: rect.y + (1 - point.y) * rect.height / 2 };
+                };
+                const meshes = [...commit.plan.entities.values()].filter(item => !item.separate).map(item => {
+                  const matrix = camera.clone().multiply(new Matrix4().fromArray(tileModel(item.pose)));
+                  const points = [];
+                  for (const x of [-TILE_WIDTH / 2, TILE_WIDTH / 2]) for (const y of [-TILE_HEIGHT / 2, TILE_HEIGHT / 2])
+                    for (const z of [-TILE_DEPTH / 2, TILE_DEPTH / 2]) points.push(new Vector3(x, y, z).applyMatrix4(matrix));
+                  const xs = points.map(point => rect.x + (point.x + 1) * rect.width / 2);
+                  const ys = points.map(point => rect.y + (1 - point.y) * rect.height / 2);
+                  return { id: item.entity.entityId, x: Math.min(...xs), y: Math.min(...ys),
+                    width: Math.max(...xs) - Math.min(...xs), height: Math.max(...ys) - Math.min(...ys) };
+                });
+                const arrival = commit.plan.entities.get(discarded.entityId), point = centre(arrival.pose);
+                const labels = [...scene.labelNodes].map(([seat, node]) => {
+                  const bounds = node.getBoundingClientRect(), style = getComputedStyle(node);
+                  return { seat, ...bounds.toJSON(),
+                    visible: !node.hidden && style.visibility !== 'hidden' && style.display !== 'none' };
+                });
+                return { elapsed: window.labelPaintClock.elapsed, frameId: commit.frame.frameId, receipt: host.lastRendered,
+                  resizeRevision: commit.viewport.resizeRevision, currentRevision: host.viewport.resizeRevision,
+                  point, target: centre(commit.plan.slots.get(discarded.slotName).poses[0]), meshes, labels, board: rect,
+                  picked: scene.pick(point.x, point.y), drawCalls: scene.style.frameDrawCalls };
+          }, discarded));
+        }
+        const first = samples[0], oracle = seat === 1 ? 1622.037718036299 : 168.9622819637009;
+        assert(Math.abs(first.point.x - oracle) < .05 && Math.abs(first.point.y - 335) < .05,
+          `seat${seat}: the first real GPU frame must reproduce the reviewer's rejected arrival position`);
+        assert.deepEqual(first.picked, { kind: 'entity', id: discarded.entityId }, 'the arriving tile remains genuine committed pick geometry');
+        const distance = sample => Math.hypot(sample.point.x - sample.target.x, sample.point.y - sample.target.y);
+        assert(distance(first) > 100 && distance(samples[3]) > 1, 'onset and intermediate travel cannot be suppressed');
+        assert(distance(samples.at(-1)) < .01, 'the unchanged 320ms movement still settles at the authoritative slot');
+        for (const sample of samples) {
+          assert.equal(sample.frameId, sample.receipt);
+          assert.equal(sample.resizeRevision, sample.currentRevision);
+          assert.equal(sample.labels.length, 4);
+          assert(sample.labels.every(label => label.visible && label.width > 0 && label.height > 0), 'all seat labels remain visible');
+          assert(sample.drawCalls <= 2, 'label avoidance does not add GPU batches');
+          for (const label of sample.labels) {
+            assert(label.x >= sample.board.x - .1 && label.y >= sample.board.y - .1
+              && label.right <= sample.board.x + sample.board.width + .1
+              && label.bottom <= sample.board.y + sample.board.height + .1, 'moving labels remain inside the visible board');
+            const collision = sample.meshes.find(mesh => overlap(label, { left: mesh.x, right: mesh.x + mesh.width,
+              top: mesh.y, bottom: mesh.y + mesh.height }));
+            assert(!collision, `seat${seat}/${sample.elapsed}ms: a native label covers a GPU-committed moving mesh: ${JSON.stringify({ label, collision })}`);
+          }
+        }
+        t.diagnostic(`Painted pre-receipt discard seat${seat}: (${first.point.x.toFixed(3)}, ${first.point.y.toFixed(3)}); all seven PNG tile-face samples match the GPU with four previous labels visible.`);
+      } finally { await page.evaluate(() => window.shellHost?.dispose()); await context.close(); }
+    }
   });
 });

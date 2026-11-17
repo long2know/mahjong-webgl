@@ -1,6 +1,8 @@
 .webgl-labels { position: absolute; inset: 0; pointer-events: none; overflow: hidden; font-family: system-ui, sans-serif; }
 .webgl-seat {
     position: absolute;
+    /* Seat geometry must follow the committed camera, not a CSS transition. */
+    transition-property: none;
     transform: translate(-50%, -50%);
     max-width: min(9rem, 19%);
     padding: .3rem .5rem;

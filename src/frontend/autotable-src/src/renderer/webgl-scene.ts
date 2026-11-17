@@ -1,4 +1,4 @@
-import { Matrix4, Vector3 } from 'three';
+import { Box3, Matrix4, Vector3 } from 'three';
 import { compileProgram } from './gpu/program';
 import {
   beveledTileGeometry, createTileMesh, disposeTileMesh, drawTileMesh, setTileInstance, uploadTileInstances,
@@ -6,8 +6,8 @@ import {
 } from './gpu/tile-mesh';
 import { invertMatrix4, pickTile, type PickRay } from './gpu/picking';
 import type { Frame, Layout, Viewport } from './renderer-contract';
-import { buildWebglPlan, fittedCamera, tileModel, type Rect, type RenderPose, type WebglPlan } from './webgl-layout';
-import { pickableModels, tileMaterialId, tileSurface } from './webgl-style';
+import { buildWebglPlan, fittedCamera, projectTableBounds, tileModel, type Rect, type RenderPose, type WebglPlan } from './webgl-layout';
+import { pickableModels, tileMaterialId, tileSurface, TABLE_FELT_Y, TABLE_SHADOW_Y } from './webgl-style';
 import { WebglPresentation, type MeldCallout, type MoveCue } from './webgl-presentation';
 import { t } from '../i18n';
 import { isReducedMotionActive } from '../theme';
@@ -41,6 +41,11 @@ void main() {
   if (row < 37.0 && side > 0.5 && side < 1.5) row = 37.0+mod(floor(v_tileId/64.0),2.0);
   vec2 cell = vec2(mod(row, 8.0)*3.0+side, floor(row/8.0));
   vec4 base = texture(u_atlas, (cell+uv)/u_atlasGrid);
+  if (row == 40.0 || row == 62.0) {
+    float grain = fract(sin(dot(localUv, vec2(127.1,311.7)))*43758.5453);
+    vec2 spot = (localUv-vec2(0.47,0.52))*vec2(1.0,0.92);
+    base.rgb *= 0.87+0.13*exp(-dot(spot,spot)*3.2)+0.014*(grain-0.5);
+  }
   if (row == 62.0 || row == 63.0) {
     if (side > 0.5) discard;
     vec2 p = abs(localUv-0.5)-vec2(0.475);
@@ -51,11 +56,7 @@ void main() {
     fragColor = vec4(base.rgb,alpha);
     return;
   }
-  bool plastic = row < 40.0 || (row >= 45.0 && row <= 57.0);
-  if (row == 40.0 || row == 62.0) {
-    float grain = fract(sin(dot(localUv, vec2(127.1,311.7)))*43758.5453);
-    base.rgb *= 0.975+0.035*grain+0.025*(1.0-length(localUv-0.5));
-  }
+  bool plastic = row < 40.0 || row == 41.0 || row == 60.0 || (row >= 45.0 && row <= 57.0);
   fragColor = vec4(plastic ? base.rgb*v_lighting.x+vec3(v_lighting.y) : base.rgb,1.0);
 }`;
 interface Target { kind: 'entity' | 'dice'; id: string | null }
@@ -90,6 +91,54 @@ function pickRay(rect: Rect, x: number, y: number, matrix: Float32Array): PickRa
 }
 const contains = (rect: Rect, x: number, y: number): boolean =>
   rect.height > 0 && x >= rect.x && x < rect.x + rect.width && y >= rect.y && y < rect.y + rect.height;
+
+export function seatLabelRect(board: Rect, hand: Rect | null, side: number, width: number, height: number,
+  blocked: Rect[]): Rect {
+  const left = board.x + 6, top = board.y + 6;
+  const right = board.x + board.width - width - 6, bottom = board.y + board.height - height - 6;
+  const positions = [[left, bottom], [right, board.y + (board.height - height) / 2], [right, top], [left, board.y + (board.height - height) / 2]];
+  const candidates: number[][] = [];
+  if (hand) {
+    const before = hand.x - width - 8, after = hand.x + hand.width + 8;
+    const above = hand.y - height - 8, below = hand.y + hand.height + 8;
+    const middle = hand.y + (hand.height - height) / 2, across = hand.x + hand.width - width;
+    candidates.push(...(side % 2
+      ? [[side === 1 ? after : before, middle], [side === 1 ? before : after, middle],
+        [side === 1 ? right : left, above], [side === 1 ? right : left, below]]
+      : [[after, middle], [before, middle], [across, side === 2 ? below : above]]));
+  }
+  candidates.push(positions[side], ...(side % 2
+    ? [[side === 1 ? right : left, top], [side === 1 ? right : left, bottom]]
+    : [[side === 2 ? left : right, side === 2 ? top : bottom]]));
+  let best: Rect | null = null, leastOverlap = Infinity;
+  const resolve = (): Rect | null => {
+    for (const [x, y] of candidates) {
+      const result = { x: Math.max(left, Math.min(right, x)), y: Math.max(top, Math.min(bottom, y)), width, height };
+      const overlap = blocked.reduce((sum, other) => sum
+        + Math.max(0, Math.min(result.x + width, other.x + other.width + 3) - Math.max(result.x, other.x - 3))
+        * Math.max(0, Math.min(result.y + height, other.y + other.height + 3) - Math.max(result.y, other.y - 3)), 0);
+      if (!overlap) return result;
+      if (overlap < leastOverlap) { best = result; leastOverlap = overlap; }
+    }
+    return null;
+  };
+  const preferred = resolve();
+  if (preferred) return preferred;
+  // Travel can occupy every usual anchor; search the current obstacles' edge clearances too.
+  candidates.length = 0;
+  const xs = [...new Set([left, right, ...blocked.flatMap(other => [other.x - width - 4, other.x + other.width + 4])]
+    .map(x => Math.max(left, Math.min(right, x))))].sort((a, b) => Math.abs(a - positions[side][0]) - Math.abs(b - positions[side][0]));
+  const ys = [...new Set([top, bottom, ...blocked.flatMap(other => [other.y - height - 4, other.y + other.height + 4])]
+    .map(y => Math.max(top, Math.min(bottom, y))))].sort((a, b) => Math.abs(a - positions[side][1]) - Math.abs(b - positions[side][1]));
+  if (side % 2) {
+    for (const y of ys) candidates.push([positions[side][0], y], [side === 1 ? left : right, y]);
+    for (const x of xs) candidates.push([x, top], [x, bottom]);
+  } else {
+    for (const x of xs) candidates.push([x, positions[side][1]], [x, side === 2 ? bottom : top]);
+    for (const y of ys) candidates.push([left, y], [right, y]);
+  }
+  return resolve() ?? best!;
+}
 
 export function meldCalloutRect(board: Rect, seat: Rect, side: number, width: number, height: number,
   visible: Rect, blocked: Rect[] = []): Rect | null {
@@ -172,7 +221,7 @@ export class WebglScene {
     const geometry = beveledTileGeometry();
     this.table = { mesh: createTileMesh(gl, this.program, capacity, geometry), targets: [] };
     this.hand = { mesh: createTileMesh(gl, this.program, capacity, geometry), targets: [] };
-    this.style = { version: 'ivory-teal-landscape-v2', verticesPerInstance: geometry.positions.length / 3,
+    this.style = { version: 'cohesive-teal-table-v3', verticesPerInstance: geometry.positions.length / 3,
       trianglesPerInstance: geometry.indices.length / 3, riverCount: 0, renderedInstances: 0, submittedTriangles: 0, frameDrawCalls: 0 };
     this.labels = document.createElement('div');
     this.labels.className = 'webgl-labels';
@@ -210,9 +259,9 @@ export class WebglScene {
     const context = canvas.getContext('2d');
     if (!context) throw Error('Tile texture composition is unavailable.');
     const colors: Record<number, string> = {
-      37: '#216c76', 38: '#ad7639', 39: '#f7f3e6', 40: '#176a6a', 41: '#103d45',
+      37: '#216c76', 38: '#ad7639', 39: '#f7f3e6', 40: '#176a67', 41: '#103d45',
       42: '#ffd36e', 43: '#60d9da', 44: '#a43e44', 58: '#205d53', 59: '#c4aa57', 60: '#0b4046',
-      62: '#176363', 63: '#3a8581',
+      62: '#186b66', 63: '#287b75',
     };
     for (let row = 0; row < 64; row++) for (let side = 0; side < 3; side++) {
       const x = ((row % 8) * 3 + side) * 64, y = Math.floor(row / 8) * 96;
@@ -273,12 +322,21 @@ export class WebglScene {
       batch.targets[index] = target;
     };
     const midpoint = plan.bounds.getCenter(new Vector3()), dimensions = plan.bounds.getSize(new Vector3());
-    push(this.table, solidPose(midpoint.x, -.035, midpoint.z, dimensions.x + .08, .04, dimensions.z + .08), 41);
-    push(this.table, solidPose(midpoint.x, -.01, midpoint.z, dimensions.x, .008, dimensions.z), 40);
+    push(this.table, solidPose(midpoint.x, -.03, midpoint.z, dimensions.x + .06, .05, dimensions.z + .06), 41);
+    push(this.table, solidPose(midpoint.x, -.008, midpoint.z, dimensions.x + .035, .012, dimensions.z + .035), 60);
+    push(this.table, solidPose(midpoint.x, TABLE_FELT_Y - .004, midpoint.z, dimensions.x, .008, dimensions.z), 40);
+    for (const side of [-1, 1]) {
+      const x = midpoint.x + side * (dimensions.x / 2 + .015);
+      const z = midpoint.z + side * (dimensions.z / 2 + .015);
+      push(this.table, solidPose(x, .0035, midpoint.z, .030, .029, dimensions.z + .060), 41);
+      push(this.table, solidPose(midpoint.x, .0035, z, dimensions.x + .060, .029, .030), 41);
+      push(this.table, solidPose(x, .0183, midpoint.z, .0013, .0003, dimensions.z + .030), 59);
+      push(this.table, solidPose(midpoint.x, .0183, z, dimensions.x + .030, .0003, .0013), 59);
+    }
     for (const river of plan.rivers.values()) {
       const position = river.getCenter(new Vector3()), extent = river.getSize(new Vector3());
-      push(this.table, solidPose(position.x, -.004, position.z, extent.x, .0001, extent.z), 63);
-      push(this.table, solidPose(position.x, -.0038, position.z, Math.max(.001, extent.x - .004), .0001,
+      push(this.table, solidPose(position.x, position.y, position.z, extent.x, .0001, extent.z), 63);
+      push(this.table, solidPose(position.x, position.y + .0001, position.z, Math.max(.001, extent.x - .004), .0001,
         Math.max(.001, extent.z - .004)), 62);
     }
     const plate = Math.max(.14, Math.min(.16, plan.centerSize));
@@ -292,8 +350,11 @@ export class WebglScene {
         const halfY = Math.abs(model[1]) * .5 + Math.abs(model[5]) * TILE_HEIGHT / 2 + Math.abs(model[9]) * TILE_DEPTH / 2;
         const width = Math.abs(model[0]) + Math.abs(model[4]) * TILE_HEIGHT + Math.abs(model[8]) * TILE_DEPTH;
         const depth = Math.abs(model[2]) + Math.abs(model[6]) * TILE_HEIGHT + Math.abs(model[10]) * TILE_DEPTH;
-        const alpha = Math.max(.045, .15 - Math.max(0, pose.position.y - halfY) * .8);
-        push(batch, solidPose(pose.position.x, separate ? -.0005 : -.0034, pose.position.z, width * 1.14, .00005, depth * 1.14), 61 + alpha);
+        const lift = Math.max(0, pose.position.y - halfY), surface = separate ? -.0005 : TABLE_SHADOW_Y;
+        push(batch, solidPose(pose.position.x + lift * .25, surface, pose.position.z + lift * .33,
+          width * 1.24, .00005, depth * 1.24), 61 + Math.max(.025, .07 - lift * .25));
+        push(batch, solidPose(pose.position.x, surface + .0001, pose.position.z,
+          width * 1.06, .00005, depth * 1.06), 61 + Math.max(.035, .12 - lift * .9));
       }
       const pickup = frame.pickup?.canTake && frame.pickup.batchPreviewSlotNames.includes(entity.slotName);
       const latest = cue?.entityId === entity.entityId;
@@ -316,7 +377,7 @@ export class WebglScene {
       if (!occupied.has(name) && placement.slot.drawShadow
         && (dragging || frame.pickup?.batchPreviewSlotNames.includes(name))) {
         const shadow: RenderPose = { position: pose.position.clone(), rotation: pose.rotation, scale: pose.scale };
-        shadow.position.y = -.003;
+        shadow.position.y = TABLE_SHADOW_Y;
         const model = new Matrix4().fromArray(tileModel(shadow, placement.slot.kind)).multiply(new Matrix4().makeScale(1, 1, .035));
         push(placement.separate ? this.hand : this.table, Float32Array.from(model.elements),
           frame.pickup?.batchPreviewSlotNames.includes(name) ? 59 : 58);
@@ -492,6 +553,33 @@ export class WebglScene {
       if (this.latestLabel.getAttribute('aria-label') !== label) this.latestLabel.setAttribute('aria-label', label);
     } else { this.latestLabel.hidden = true; this.latestEntityId = null; this.latestTile.style.backgroundImage = 'none'; }
     const present = new Set<number>();
+    const obstacles = [...plan.groups.values(), ...plan.rivers.values()]
+      .map(bounds => projectTableBounds(bounds, rect, this.matrices[0]));
+    if (plan.compact) {
+      // Reserve public reveal routes even at rest: the canvas can paint before poll moves DOM badges.
+      const midpoint = plan.bounds.getCenter(new Vector3()), extent = plan.bounds.getSize(new Vector3());
+      const anchors = [[0, -1], [1, 0], [0, 1], [-1, 0]];
+      for (const [seat, river] of plan.rivers) {
+        const side = (seat - (frame.session.viewSeat ?? 0) + 4) % 4;
+        const route = river.clone().expandByPoint(new Vector3(
+          midpoint.x + anchors[side][0] * extent.x * .43, plan.bounds.max.y + .06,
+          midpoint.z + anchors[side][1] * extent.z * .43)).expandByScalar(.06);
+        obstacles.push(projectTableBounds(route, rect, this.matrices[0]));
+      }
+    }
+    // Settled groups exclude travel; also protect the meshes displayed by this completed frame.
+    const camera = new Matrix4().fromArray(this.matrices[0]);
+    for (const { entity, pose, separate } of plan.entities.values()) {
+      if (separate) continue;
+      const matrix = camera.clone().multiply(new Matrix4().fromArray(tileModel(pose, entity.kind)));
+      const points: Vector3[] = [];
+      for (const x of [-TILE_WIDTH / 2, TILE_WIDTH / 2]) for (const y of [-TILE_HEIGHT / 2, TILE_HEIGHT / 2])
+        for (const z of [-TILE_DEPTH / 2, TILE_DEPTH / 2]) points.push(new Vector3(x, y, z).applyMatrix4(matrix));
+      const xs = points.map(point => rect.x + (point.x + 1) * rect.width / 2);
+      const ys = points.map(point => rect.y + (1 - point.y) * rect.height / 2);
+      obstacles.push({ x: Math.min(...xs), y: Math.min(...ys),
+        width: Math.max(...xs) - Math.min(...xs), height: Math.max(...ys) - Math.min(...ys) });
+    }
     for (const seat of frame.seats) {
       present.add(seat.seat);
       let node = this.labelNodes.get(seat.seat);
@@ -499,14 +587,22 @@ export class WebglScene {
         node = document.createElement('span'); this.labelNodes.set(seat.seat, node); this.labels.append(node);
       }
       const relative = (seat.seat - (frame.session.viewSeat ?? 0) + 4) % 4;
-      const positions = [[.025, .95], [.975, .5], [.975, .055], [.025, .5]];
-      node.style.left = `${rect.x + rect.width * positions[relative][0]}px`;
-      node.style.top = `${rect.y + rect.height * positions[relative][1]}px`;
       const action = cue?.seat === seat.seat ? `${t(`table.${cue.kind}`)} · ` : '';
       const text = `${['E', 'S', 'W', 'N'][seat.seat]} · ${action}${seat.nick ?? `Seat ${seat.seat + 1}`}${seat.score === null ? '' : ` · ${seat.score}`}`;
       if (node.textContent !== text) node.textContent = text;
       node.dataset.side = String(relative);
       node.className = `${active === seat.seat ? 'webgl-seat active' : 'webgl-seat'}${commit.cue?.sourceSeat === seat.seat ? ' played' : ''}`;
+      node.style.maxWidth = `min(9rem, ${rect.width * .19}px)`;
+      const hand = new Box3();
+      for (const group of ['hand', 'meld']) {
+        const bounds = plan.groups.get(`${seat.seat}:${group}`);
+        if (bounds) hand.union(bounds);
+      }
+      const label = seatLabelRect(rect, hand.isEmpty() ? null : projectTableBounds(hand, rect, this.matrices[0]),
+        relative, node.offsetWidth, node.offsetHeight, obstacles);
+      node.style.left = `${label.x + (relative === 1 || relative === 2 ? label.width : 0)}px`;
+      node.style.top = `${label.y + label.height / 2}px`;
+      obstacles.push(label);
     }
     for (const [seat, node] of this.labelNodes) if (!present.has(seat)) { node.remove(); this.labelNodes.delete(seat); }
     this.updateMeldCallout(commit);

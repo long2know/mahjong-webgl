@@ -138,3 +138,28 @@ export function thing(slotName, face, rotationIndex = 0) {
     ...(face !== undefined ? { face } : {}),
   };
 }
+
+/** Synthetic, physically complete Changsha fixtures through the real viewer-safe adapter. */
+export function changshaTableFixture({ completeWall = false } = {}) {
+  const h = gameHarness();
+  h.join();
+  const things = [];
+  if (!completeWall) {
+    for (let id = 0; id < 14; id++) things.push([String(id), thing(`hand.${id}@0`, Math.floor(id / 4))]);
+    for (const [seat, count] of [[1, 13], [2, 13], [3, 10]]) for (let index = 0; index < count; index++)
+      things.push([`concealed-${seat}-${index}`, thing(`hand.${index}@${seat}`, null, 2)]);
+    for (let index = 0; index < 3; index++) things.push([String(16 + index), thing(`meld.0.${index}@3`, 4)]);
+    for (let seat = 0; seat < 4; seat++) things.push([String(80 + seat * 4), thing(`discard.0.0@${seat}`, 20 + seat)]);
+  }
+  for (const [seat, stacks] of [[0, 14], [1, 14], [2, 13], [3, 13]]) {
+    for (let stack = 0; stack < stacks; stack++) for (let tier = 0; tier < 2; tier++) {
+      const remaining = seat === 0 && stack < 9 || seat === 2 && (stack >= 10 || stack === 9 && tier === 0) || seat === 3;
+      if (completeWall || remaining) things.push([`wall-${seat}-${stack}-${tier}`, thing(`wall.${stack}.${tier}@${seat}`, null)]);
+    }
+  }
+  h.snapshot(things, { phase: completeWall ? 'RollingDice' : 'AwaitingDiscard' });
+  h.adapter.setPresentation({
+    viewMode: 'flat', boardLayout: 'rectangular', handLayout: 'separate', tileLabels: true, lookDown: 0, zoom: 0,
+  });
+  return { h, layout: h.adapter.layout, frame: h.adapter.refresh() };
+}
