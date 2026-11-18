@@ -59,7 +59,7 @@ test('frontend inventory retains authority/input/layout/privacy callers and actu
   assert(!tests.argv.includes('tests/node/tile-ui-test-support.mjs'),
     'Fixture support is not a standalone test inventory entry');
   assert.equal(new Set(tests.argv).size, tests.argv.length);
-  assert.equal(tests.expected, 199);
+  assert.equal(tests.expected, 208);
   const commands = JSON.stringify(description.plans);
   assert.doesNotMatch(commands, /UNITY_LICENSE|unity-webgl|verify-unity|build_unity|baseline-fetch/);
 });
