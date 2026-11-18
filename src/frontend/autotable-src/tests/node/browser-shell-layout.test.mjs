@@ -2,9 +2,9 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
-import { root, require, changshaTableFixture, plain } from './renderer-test-support.mjs';
+import { root, require, changshaTableFixture, plain, thing } from './renderer-test-support.mjs';
 
-const { chromium } = require('@playwright/test');
+const { chromium, webkit } = require('@playwright/test');
 const { buildSync } = require('esbuild');
 
 // Execute the actual shell, move-log and viewport host in a real DOM, with no
@@ -22,12 +22,16 @@ function productionModules() {
         import * as host from './src/renderer/webgl-host.ts';
         import * as moves from './src/move-log.ts';
         import * as claims from './src/ui/claim-window-overlay.ts';
+        import * as settings from './src/settings-drawer.ts';
+        import { GameUi } from './src/game-ui.ts';
         import { tileModel } from './src/renderer/webgl-layout.ts';
         import { TILE_WIDTH, TILE_HEIGHT, TILE_DEPTH } from './src/renderer/gpu/tile-mesh.ts';
         import { Matrix4, Vector3 } from 'three';
         window.shellSource = {
           'browser-shell.ts': shell, 'ui/drawer-accessibility.ts': drawers,
           'renderer/webgl-host.ts': host, 'move-log.ts': moves, 'ui/claim-window-overlay.ts': claims,
+          'settings-drawer.ts': settings,
+          GameUi,
           geometry: { tileModel, TILE_WIDTH, TILE_HEIGHT, TILE_DEPTH, Matrix4, Vector3 },
         };
       `,
@@ -43,7 +47,7 @@ const styles = [
   'src/ui/hicks-mobile-sidebar.css', 'src/browser-shell.css', 'src/mobile-table.css',
   'src/renderer/renderer-host.css', 'src/ui/rule-action-controls.css', 'src/ui/claim-window-overlay.css',
   'src/renderer/webgl-host.css',
-  'src/ui/tile-face.css', 'src/ui/claim-preview.css',
+  'src/ui/tile-face.css', 'src/ui/claim-preview.css', 'src/ui/lobby-setup.css',
 ].map(file => fs.readFileSync(path.join(root, file), 'utf8')).join('\n');
 
 async function measure(page) {
@@ -208,8 +212,10 @@ async function focusGeometry(page) {
   });
 }
 
-test('production shell + WebglHost reserve unobstructed controls, panels and hand space at phone, landscape and desktop sizes', async t => {
-  const executablePath = process.env.CHROMIUM_EXECUTABLE_PATH;
+async function layoutBrowser(t) {
+  const engine = process.env.BROWSER_LAYOUT_ENGINE ?? 'chromium';
+  assert(['chromium', 'webkit'].includes(engine), 'BROWSER_LAYOUT_ENGINE must be chromium or webkit');
+  const executablePath = engine === 'chromium' ? process.env.CHROMIUM_EXECUTABLE_PATH : undefined;
   if (executablePath) assert(fs.existsSync(executablePath), 'CHROMIUM_EXECUTABLE_PATH must point to an installed browser');
   // Chromium's singleton socket must stay below the Unix-domain path limit.
   const runtime = path.resolve(root, `../../../.work/shell-${process.pid}`);
@@ -222,11 +228,185 @@ test('production shell + WebglHost reserve unobstructed controls, panels and han
     if (previousTemp === undefined) delete process.env.TMPDIR; else process.env.TMPDIR = previousTemp;
     fs.rmSync(runtime, { recursive: true, force: true });
   });
-  browser = await chromium.launch({
+  browser = await ({ chromium, webkit })[engine].launch({
     ...(executablePath ? { executablePath } : {}), headless: true,
-    args: ['--no-sandbox', '--disable-dev-shm-usage', '--disable-breakpad'],
+    ...(engine === 'chromium' ? { args: ['--no-sandbox', '--disable-dev-shm-usage', '--disable-breakpad'] } : {}),
     env: { ...process.env, HOME: runtime, XDG_CACHE_HOME: runtime, XDG_CONFIG_HOME: runtime },
   });
+  t.diagnostic(`${engine} ${browser.version()}; real browser engine, synthetic table fixture, not physical-device qualification`);
+  return browser;
+}
+
+function localHandFixture(kind) {
+  const source = changshaTableFixture();
+  const things = new Map(source.h.client.things.entries());
+  if (kind === 'melds') {
+    [0, 1, 2, 4, 5, 6].forEach((id, index) =>
+      things.set(String(id), thing(`meld.${Math.floor(index / 3)}.${index % 3}@0`, Math.floor(id / 4))));
+  } else if (kind === 'kongs') {
+    const walls = [...things.keys()].filter(id => String(id).startsWith('wall-'));
+    walls.slice(0, 4).forEach(id => things.delete(id));
+    for (let id = 0; id < 16; id++)
+      things.set(String(id), thing(`meld.${Math.floor(id / 4)}.${id % 4}@0`, Math.floor(id / 4)));
+    things.set('20', thing('hand.0@0', 5));
+    things.set('24', thing('hand.1@0', 6));
+  }
+  source.h.snapshot([...things]);
+  const fixture = plain({ layout: source.h.adapter.layout, frame: source.h.adapter.refresh() });
+  source.h.close();
+  return fixture;
+}
+
+async function handGeometry(page) {
+  await focusSettled(page);
+  return page.evaluate(() => {
+    const host = window.shellHost, scene = host.scene, { plan, frame } = scene.committed;
+    const { tileModel, TILE_WIDTH, TILE_HEIGHT, TILE_DEPTH, Matrix4, Vector3 } = window.shellSource.geometry;
+    const canvas = host.canvas.getBoundingClientRect();
+    const camera = new Matrix4().fromArray(scene.picking.matrices[1]), rect = plan.hand;
+    const tiles = [...plan.entities.values()].filter(item => item.separate).map(item => {
+      const matrix = camera.clone().multiply(new Matrix4().fromArray(tileModel(item.pose))), points = [];
+      for (const x of [-TILE_WIDTH / 2, TILE_WIDTH / 2]) for (const y of [-TILE_HEIGHT / 2, TILE_HEIGHT / 2])
+        for (const z of [-TILE_DEPTH / 2, TILE_DEPTH / 2])
+          points.push(new Vector3(x, y, z).applyMatrix4(matrix));
+      const xs = points.map(point => canvas.left + rect.x + (point.x + 1) * rect.width / 2);
+      const ys = points.map(point => canvas.top + rect.y + (1 - point.y) * rect.height / 2);
+      const at = scene.project(item.entity.entityId);
+      return { id: item.entity.entityId, group: item.entity.group, left: Math.min(...xs), right: Math.max(...xs),
+        top: Math.min(...ys), bottom: Math.max(...ys), x: canvas.left + at.x, y: canvas.top + at.y,
+        picked: scene.pick(at.x, at.y), hit: document.elementFromPoint(canvas.left + at.x, canvas.top + at.y)?.id };
+    });
+    return { width: innerWidth, height: innerHeight, hand: {
+      left: canvas.left + rect.x, right: canvas.left + rect.x + rect.width,
+      top: canvas.top + rect.y, bottom: canvas.top + rect.y + rect.height,
+    }, tiles, handCount: frame.localHand.entityIds.length,
+    source: JSON.stringify(window.tableFixture.frame), revision: host.viewport.resizeRevision,
+    committedRevision: scene.committed.viewport.resizeRevision };
+  });
+}
+
+async function layoutEvidence(page, name, value) {
+  if (!process.env.BROWSER_LAYOUT_ARTIFACTS) return;
+  const directory = path.resolve(process.env.BROWSER_LAYOUT_ARTIFACTS);
+  fs.mkdirSync(directory, { recursive: true });
+  const prefix = `${process.env.BROWSER_LAYOUT_STAGE ?? 'after'}-${process.env.BROWSER_LAYOUT_ENGINE ?? 'chromium'}-${name}`;
+  fs.writeFileSync(path.join(directory, `${prefix}.json`), JSON.stringify(value, null, 2) + '\n');
+  await page.screenshot({ path: path.join(directory, `${prefix}.png`) });
+}
+
+test('local hand bounds and picks include mixed melds and long kong hands through mobile reflows', async t => {
+  const browser = await layoutBrowser(t), bundle = productionModules();
+  for (const kind of ['full', 'melds', 'kongs']) await t.test(kind, async () => {
+    const fixture = localHandFixture(kind);
+    const context = await browser.newContext({
+      viewport: { width: 430, height: 932 }, isMobile: true, hasTouch: true, deviceScaleFactor: 3, reducedMotion: 'reduce',
+    });
+    const page = await context.newPage(), failures = [];
+    try {
+      await focusPage(page, bundle, true, fixture);
+      for (const [width, height, bottom = 0] of [[430, 932], [390, 844], [393, 640, 34], [390, 520], [932, 430], [393, 851], [1280, 800]]) {
+        await page.setViewportSize({ width, height });
+        await page.evaluate(bottom => {
+          document.querySelector('.renderer-inset-probe').style.paddingBottom = `${bottom}px`;
+        }, bottom);
+        for (const viewMode of ['flat', 'perspective']) {
+          await page.evaluate(viewMode => {
+            window.tableFixture.frame.presentation.viewMode = viewMode; window.publishTableFixture();
+          }, viewMode);
+          const result = await handGeometry(page);
+          const at = `${kind}-${width}x${height}-${viewMode}`;
+          assert.equal(result.committedRevision, result.revision, `${at}: current GPU-committed resize`);
+          assert.equal(result.tiles.length, kind === 'kongs' ? 18 : 14, `${at}: every physical hand/meld tile is present`);
+          for (const tile of result.tiles) {
+            if (tile.left < result.hand.left - .1 || tile.right > result.hand.right + .1
+              || tile.top < result.hand.top - .1 || tile.bottom > result.hand.bottom + .1) {
+              failures.push({ at, hand: result.hand, tile });
+            }
+          }
+          if (viewMode === 'flat' && kind !== 'full') await layoutEvidence(page, at, result);
+          const target = result.tiles.filter(tile => tile.group === 'hand').at(-1);
+          assert.deepEqual(target.picked, { kind: 'entity', id: target.id }, `${at}: actual displayed tile raycast`);
+          if (target.x >= 0 && target.x < width && target.y >= 0 && target.y < height) {
+            assert.equal(target.hit, 'webgl-canvas', `${at}: tile center receives an ordinary tap`);
+            await page.evaluate(() => { window.tableInputActions = []; });
+            await page.touchscreen.tap(target.x, target.y);
+            assert.deepEqual(await page.evaluate(() => window.tableInputActions.map(entry => entry.packet.intent.entityId)),
+              [target.id], `${at}: exactly one intent for the touched physical tile`);
+          }
+          assert.equal(await page.evaluate(() => JSON.stringify(window.tableFixture.frame)), result.source,
+            `${at}: presentation and input do not change the supplied game state`);
+        }
+      }
+      assert.deepEqual(failures, [], 'Every actual hand/meld mesh corner must fit the hand viewport, not merely its center');
+    } finally { await page.evaluate(() => window.shellHost?.dispose()); await context.close(); }
+  });
+});
+
+test('overlay close controls stay inside the visual viewport and accept ordinary clicks', async t => {
+  const browser = await layoutBrowser(t), bundle = productionModules();
+  const fixture = localHandFixture('melds');
+  for (const [width, height, safe = 0] of [[390, 844], [430, 932], [844, 390, 47], [1280, 800]]) await t.test(`${width}x${height}`, async () => {
+    const context = await browser.newContext({ viewport: { width, height }, deviceScaleFactor: width < 600 ? 3 : 1,
+      ...(width < 1000 ? { isMobile: true, hasTouch: true } : {}), reducedMotion: 'reduce' });
+    const page = await context.newPage();
+    try {
+      await focusPage(page, bundle, true, fixture);
+      if (width === 1280) await layoutEvidence(page, 'desktop-table-1280x800', await handGeometry(page));
+      await page.evaluate(safe => {
+        // Desktop WebKit has no physical notch. Resolve the production safe-area
+        // variables to a representative landscape iPhone exclusion on both sides.
+        document.documentElement.style.setProperty('--game-safe-left', `${safe}px`);
+        document.documentElement.style.setProperty('--game-safe-right', `${safe}px`);
+        window.shellSource['settings-drawer.ts'].installSettingsDrawerV2();
+        const drawer = Object.create(window.shellSource.GameUi.prototype);
+        drawer.elements = Object.fromEntries([
+          ['settingsToggle', 'settings-toggle'], ['settingsDrawer', 'settings-drawer'], ['settingsClose', 'settings-close'],
+          ['settingsBotStrength', 'settings-bot-strength'], ['settingsHandCount', 'settings-hand-count'],
+          ['settingsAutoDeal', 'settings-auto-deal'], ['settingsSound', 'settings-sound'], ['settingsApply', 'settings-apply'],
+        ].map(([key, id]) => [key, document.getElementById(id)]));
+        drawer.setupSettingsDrawer();
+      }, safe);
+      for (const [toggle, panel, close] of [
+        ['settings-button', 'settings-drawer-v2', 'settings-close-v2'],
+        ['settings-toggle', 'settings-drawer', 'settings-close'],
+      ]) {
+        if (width < 1000) await page.locator(`#${toggle}`).tap();
+        else await page.locator(`#${toggle}`).click();
+        await page.waitForFunction(id => !document.getElementById(id).getAnimations({ subtree: true })
+          .some(animation => animation.playState === 'running'), panel);
+        const result = await page.evaluate(({ panel, close }) => {
+          const element = document.getElementById(panel), button = document.getElementById(close);
+          const bounds = button.getBoundingClientRect(), hit = document.elementFromPoint((bounds.left + bounds.right) / 2, (bounds.top + bounds.bottom) / 2);
+          const viewport = window.visualViewport;
+          const style = getComputedStyle(document.documentElement);
+          const safeLeft = parseFloat(style.getPropertyValue('--game-safe-left')) || 0;
+          const safeRight = parseFloat(style.getPropertyValue('--game-safe-right')) || 0;
+          return { panel: element.getBoundingClientRect().toJSON(), close: bounds.toJSON(), hit: hit?.id,
+            hitTag: hit?.tagName, hitClass: hit?.className, closeVisibility: getComputedStyle(button).visibility,
+            reachable: button.contains(hit), scrollWidth: element.scrollWidth, clientWidth: element.clientWidth,
+            safeAreaFixture: { left: safeLeft, right: safeRight },
+            viewport: { left: viewport.offsetLeft + safeLeft, top: viewport.offsetTop,
+              right: viewport.offsetLeft + viewport.width - safeRight, bottom: viewport.offsetTop + viewport.height } };
+        }, { panel, close });
+        await layoutEvidence(page, `${panel}-${width}x${height}`, result);
+        assert(result.panel.left >= result.viewport.left && result.panel.right <= result.viewport.right + .1,
+          `${panel}: actual panel bounds ${JSON.stringify(result)}`);
+        assert(result.close.left >= result.viewport.left && result.close.right <= result.viewport.right
+          && result.close.top >= result.viewport.top && result.close.bottom <= result.viewport.bottom,
+        `${close}: entire close target must be inside the visual viewport: ${JSON.stringify(result)}`);
+        assert(result.reachable, `${close}: center is occluded: ${JSON.stringify(result)}`);
+        assert(result.scrollWidth <= result.clientWidth + 1, `${panel}: content forces horizontal scrolling`);
+        assert(result.close.width >= 44 && result.close.height >= 44, `${close}: full touch target`);
+        if (width < 1000) await page.locator(`#${close}`).tap({ timeout: 2000 });
+        else await page.locator(`#${close}`).click({ timeout: 2000 });
+        assert.equal(await page.locator(`#${panel}`).getAttribute('aria-hidden'), 'true', 'the production close handler runs');
+      }
+    } finally { await page.evaluate(() => window.shellHost?.dispose()); await context.close(); }
+  });
+});
+
+test('production shell + WebglHost reserve unobstructed controls, panels and hand space at phone, landscape and desktop sizes', async t => {
+  const browser = await layoutBrowser(t);
   const bundle = productionModules();
   for (const [width, height] of [[360, 800], [390, 844], [500, 900], [844, 390], [1280, 800]]) {
     await t.test(`${width}×${height}`, async () => {

@@ -334,6 +334,8 @@ function separateHand(plan: WebglPlan, layout: Layout, frame: Frame, localWidth:
   const melds = plan.compact ? frame.entities.filter(entity => entity.group === 'meld' && entity.seat === frame.localHand.seat) : [];
   if (melds.length) {
     for (; width >= 1; width -= .5) {
+      // Wrapping and centering must share the same stable hand rail.
+      const railWidth = Math.min(available, columns * width + (columns - 1) * 4 + width * .5);
       const used = Array<number>(rows).fill(0);
       const positions = new Map<string, { row: number; x: number; factor: number }>();
       let row = 0;
@@ -343,7 +345,7 @@ function separateHand(plan: WebglPlan, layout: Layout, frame: Frame, localWidth:
         const factor = entity.group === 'meld' ? .6 : 1;
         const itemWidth = entity.group === 'meld' ? localWidth(entity) / .06 * width * factor : width;
         const gap = entity.entityId === frame.localHand.drawnEntityId ? width * .5 + 4 : 4;
-        while (row < rows && used[row] + (used[row] ? gap : 0) + itemWidth > available) row++;
+        while (row < rows && used[row] + (used[row] ? gap : 0) + itemWidth > railWidth) row++;
         if (row === rows) break;
         if (used[row]) used[row] += gap;
         positions.set(entity.entityId, { row, x: used[row] + itemWidth / 2, factor });
@@ -351,7 +353,6 @@ function separateHand(plan: WebglPlan, layout: Layout, frame: Frame, localWidth:
       }
       if (row === rows) continue;
       const scale = width * unit / .06;
-      const railWidth = Math.min(available, columns * width + (columns - 1) * 4 + width * .5);
       for (const upper of melds.filter(addedKong)) {
         const lower = melds.find(entity => entity.indexes[0] === upper.indexes[0] && entity.indexes[1] === 1)!;
         positions.set(upper.entityId, positions.get(lower.entityId)!);
