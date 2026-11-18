@@ -283,8 +283,13 @@ body.browser-shell-active :is(#settings-close, #settings-close-v2, #settings-sav
 }
 body.browser-shell-active :is(#settings-drawer, #settings-drawer-v2)[aria-hidden="true"] { visibility: hidden; }
 body.browser-shell-active :is(#settings-drawer, #settings-drawer-v2) {
+    max-width: calc(100vw - 16px - var(--game-safe-left, 0px) - var(--game-safe-right, 0px));
     max-height: calc(100dvh - 16px - var(--game-viewport-bottom, 0px) - env(safe-area-inset-top));
     overscroll-behavior: contain;
+}
+body.browser-shell-active #settings-drawer.settings-open,
+body.browser-shell-active #settings-drawer-v2.settings-drawer-v2-open {
+    right: max(8px, var(--game-safe-right, 0px));
 }
 body.browser-shell-active :is(.settings-drawer-body, .settings-drawer-v2-panels) { min-height: 0; }
 body.browser-shell-active .settings-drawer-v2-tabs { flex-wrap: wrap; }
