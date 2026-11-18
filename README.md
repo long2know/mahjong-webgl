@@ -114,6 +114,13 @@ reject engine/WASM-player artifacts and legacy renderer imports.
 PR CI additionally builds the normal Docker image and exercises an isolated
 hardened synthetic runtime without registry publication.
 
+Source-only browser layout regressions need no running server:
+`node --test src/frontend/autotable-src/tests/node/browser-shell-layout.test.mjs`.
+Set `BROWSER_LAYOUT_ENGINE=webkit` to repeat them with an installed Playwright
+WebKit engine. They measure real tile corners, input and drawer close controls;
+notched safe areas use synthetic insets, not physical-iPhone qualification.
+`BROWSER_LAYOUT_ARTIFACTS` optionally saves layout JSON and screenshots.
+
 Real-browser output distinguishes GPU-fence-completed frames, actual pointer/
 touch actions, server outcomes, fixed-hand PNG evidence and explicit failure
 paths. Software-GPU and emulated-phone timings are not physical-device FPS or
