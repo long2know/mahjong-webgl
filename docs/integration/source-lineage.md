@@ -1,4 +1,4 @@
-# What “Autotable-derived” means in Mahjong Web
+# What “Autotable-derived” means in Mahjong WebGL
 
 There is **no external Autotable installation, npm package, engine download or
 required remote Autotable service**. The browser build resolves in-repository

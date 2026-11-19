@@ -1,4 +1,9 @@
-# Mahjong Web
+# Mahjong WebGL
+
+Source repository: **`long2know/mahjong-webgl`**.
+
+The standalone brief for a fresh Changsha implementation is in
+[NEW_SQUAD_PROMPT.md](NEW_SQUAD_PROMPT.md).
 
 Browser-native **WebGL2** mahjong with perspective/flat views, ivory beveled
 tiles, inset teal/amber backs, four subtle discard rivers, responsive rectangular
@@ -38,8 +43,8 @@ excluded from this fixture runner while the previous deployment is a rollback.
 Only Docker with Buildx/Compose is required for the container build:
 
 ```sh
-bash build.sh --tag mahjong-web:local
-# PowerShell: ./build.ps1 -Tag mahjong-web:local
+bash build.sh --tag mahjong-webgl:local
+# PowerShell: pwsh -File ./build.ps1 -Tag mahjong-webgl:local
 ./scripts/compose-bootstrap.sh
 docker compose up -d --build
 ```
@@ -51,10 +56,18 @@ root filesystem, dropped capabilities and no-new-privileges.
 **Existing deployments:** retain your Compose project/volume identity and stable
 signing configuration. A repository rename is not permission to replace a
 database or start an empty project-scoped volume. `MAHJONG_IMAGE` remains the
-image override. The old `ghcr.io/long2know/mahjong-unity:latest` is a historical
-rollback image, not silently redirected; the new publishing path uses
-`ghcr.io/long2know/mahjong-web` and requires separate candidate/digest acceptance.
+image override. Both `ghcr.io/long2know/mahjong-web` and
+`ghcr.io/long2know/mahjong-unity` are historical/rollback image namespaces;
+existing tags/digests are not deleted, retagged or redirected. New publication
+targets only **`ghcr.io/long2know/mahjong-webgl`** and requires separate
+candidate/digest acceptance. A future unrelated `long2know/mahjong-web`
+repository is not a build or publication target for this project.
 No registry promotion occurs during a source build or PR CI.
+Repository rename does not move packages or make them public. A new personal
+GHCR package defaults private; public pull access requires a separate
+[package-admin visibility/access step](docs/ghcr-publishing.md#package-visibility-and-repository-access).
+See [existing project/volume retention](docs/integration/docker-build-and-run.md)
+before changing a deployment's checkout folder or Compose project name.
 
 To host below a path instead of site root, set runtime **`BASE_URL=/mahjong`**
 and open **https://games.long2know.com/mahjong/** behind your proxy. Only the

@@ -4,6 +4,8 @@
 # loopback port 8950 by default (container port 8080 stays fixed). SQLite
 # persistence lives on a project-scoped `mahjong-data` named volume so
 # data survives `docker compose down` (use `docker compose down -v` to wipe).
+# Existing deployments must retain their Compose project name after a checkout
+# rename; all provider volume keys stay unchanged. See docs/integration/docker-build-and-run.md.
 #
 # Quickstart (first run provisions a stable JWT key into a gitignored .env):
 #   ./scripts/compose-bootstrap.sh        # idempotent — safe to re-run
@@ -30,7 +32,7 @@ services:
       dockerfile: Dockerfile
       args:
         BUILD_SHA: ${BUILD_SHA:-local}
-    image: ${MAHJONG_IMAGE:-mahjong-web:local}
+    image: ${MAHJONG_IMAGE:-mahjong-webgl:local}
     platform: ${MAHJONG_PLATFORM:-linux/amd64}
     ports:
       - target: 8080

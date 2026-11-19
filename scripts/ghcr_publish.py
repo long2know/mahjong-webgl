@@ -8,7 +8,7 @@ import re
 import subprocess
 
 ROOT = Path(__file__).resolve().parents[1]
-REPO = "long2know/mahjong-web"
+REPO = "long2know/mahjong-webgl"
 IMAGE = "ghcr.io/" + REPO
 
 

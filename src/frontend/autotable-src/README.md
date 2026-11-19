@@ -1,4 +1,4 @@
-# Mahjong Web browser client
+# Mahjong WebGL browser client
 
 The default entry loads one browser-native WebGL2 host. There is no engine
 selector, build opt-in, Unity bridge/loader, fallback renderer or prebuilt player.

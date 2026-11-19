@@ -20,7 +20,7 @@ DIGEST = "sha256:" + "b" * 64
 
 class PublicationTests(unittest.TestCase):
     def setUp(self):
-        self.pr = {"head": {"repo": {"full_name": publish.REPO}, "sha": SHA},
+        self.pr = {"head": {"repo": {"full_name": publish.REPO}, "ref": "main", "sha": SHA},
                    "base": {"repo": {"full_name": publish.REPO}, "ref": "dev"},
                    "state": "open", "merged_at": None, "body": ""}
         self.calls = []
@@ -31,17 +31,19 @@ class PublicationTests(unittest.TestCase):
             return "" if "status" in args else SHA
         return json.dumps({"digest": DIGEST})
 
-    def test_prepare_checks_clean_exact_same_repo_dev_head_without_any_bundle(self):
+    def test_prepare_accepts_clean_exact_same_repo_main_to_dev_head_without_any_bundle(self):
         with patch.object(publish, "command", self.command), patch.object(publish, "api", return_value=self.pr), contextlib.redirect_stdout(io.StringIO()):
             publish.prepare(ROOT, SHA, "36")
-        self.assertEqual(publish.REPO, "long2know/mahjong-web")
+        self.assertEqual(publish.REPO, "long2know/mahjong-webgl")
         self.assertTrue(any("status" in call for call in self.calls))
         self.assertFalse(any(call[0] == "docker" for call in self.calls))
 
     def test_prepare_rejects_dirty_source_forks_wrong_head_or_base(self):
         cases = []
         for path, value in [(("head", "sha"), "c" * 40), (("base", "ref"), "main"),
-                            (("head", "repo", "full_name"), "outside/fork")]:
+                            (("head", "repo", "full_name"), "outside/fork"),
+                            (("head", "repo", "full_name"), "long2know/mahjong-web"),
+                            (("base", "repo", "full_name"), "long2know/mahjong-web")]:
             pr = copy.deepcopy(self.pr)
             target = pr
             for key in path[:-1]:
@@ -116,9 +118,10 @@ class PublicationTests(unittest.TestCase):
         verify(workflow)
         mutations = [
             ("steps.build.outputs.digest", "inputs.source_sha"),
-            ('IMAGE="ghcr.io/long2know/mahjong-web@${DIGEST}"', 'IMAGE="mahjong-web:ci"'),
-            ('docker pull --platform linux/amd64 "$IMAGE"', 'docker pull ghcr.io/long2know/mahjong-web:latest'),
-            ('--image "$IMAGE"', '--image mahjong-web:ci'),
+            ('IMAGE="ghcr.io/long2know/mahjong-webgl@${DIGEST}"', 'IMAGE="mahjong-webgl:ci"'),
+            ('IMAGE="ghcr.io/long2know/mahjong-webgl@${DIGEST}"', 'IMAGE="ghcr.io/long2know/mahjong-web@${DIGEST}"'),
+            ('docker pull --platform linux/amd64 "$IMAGE"', 'docker pull ghcr.io/long2know/mahjong-webgl:latest'),
+            ('--image "$IMAGE"', '--image mahjong-webgl:ci'),
             ('--source-sha "$SOURCE_SHA"', '--source-sha "$(git rev-parse HEAD)"'),
             ("SOURCE_SHA: ${{ inputs.source_sha }}", "SOURCE_SHA: ${{ github.sha }}"),
             ("id: runtime\n", "id: runtime\n        continue-on-error: true\n"),
@@ -128,7 +131,7 @@ class PublicationTests(unittest.TestCase):
             ("set -euo pipefail", "set +e"),
             ('          python3 -B tests/migration/container_proxy_smoke.py --image "$IMAGE" --source-sha "$SOURCE_SHA"\n', ""),
             ("source/artifacts/base-url/hosted-nginx/receipt.json", "source/artifacts/**"),
-            ("          IMAGE: ${{ steps.runtime.outputs.image }}", "          IMAGE: mahjong-web:ci"),
+            ("          IMAGE: ${{ steps.runtime.outputs.image }}", "          IMAGE: mahjong-webgl:ci"),
         ]
         for before, after in mutations:
             with self.subTest(mutation=after):
@@ -149,8 +152,10 @@ class PublicationTests(unittest.TestCase):
                 patch.object(publish.subprocess, "run") as run, contextlib.redirect_stdout(io.StringIO()):
             publish.promote(DIGEST, SHA, "123", "1", "36", "runtime-qualified:" + DIGEST)
             args = run.call_args.args[0]
-            self.assertIn("ghcr.io/long2know/mahjong-web:latest", args)
-            self.assertFalse(any("mahjong-unity" in value for value in args))
+            self.assertEqual(args, ["docker", "buildx", "imagetools", "create", "--prefer-index=false",
+                                   "--tag", "ghcr.io/long2know/mahjong-webgl:latest", publish.IMAGE + "@" + DIGEST])
+            for value in [*args, *(value for call in self.calls for value in call)]:
+                self.assertNotRegex(value, r"^ghcr\.io/long2know/(?:mahjong-web|mahjong-unity)(?=[:@]|$)")
 
     def test_wrong_digest_confirmation_or_missing_environment_reviewers_prevents_mutation(self):
         with patch.object(publish, "command", self.command), patch.object(publish.subprocess, "run") as run:
