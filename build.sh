@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
-IMAGE="${MAHJONG_IMAGE:-mahjong-web:local}"
+IMAGE="${MAHJONG_IMAGE:-mahjong-webgl:local}"
 PLATFORM="${MAHJONG_PLATFORM:-linux/amd64}"
 ARCHIVE=""
 NO_CACHE=false

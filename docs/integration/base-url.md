@@ -5,7 +5,7 @@ One unchanged image runs at root or behind a path-preserving reverse proxy:
 ```yaml
 services:
   mahjong:
-    image: ghcr.io/long2know/mahjong-web:latest
+    image: ghcr.io/long2know/mahjong-webgl:latest
     environment:
       BASE_URL: /mahjong
       # Only when this is the actual immediate trusted proxy peer:

@@ -34,7 +34,7 @@ RUN --mount=type=tmpfs,target=/build-work \
 WORKDIR /app
 ARG BUILD_SHA="local"
 ENV BUILD_SHA=${BUILD_SHA}
-LABEL org.opencontainers.image.source="https://github.com/long2know/mahjong-web" \
+LABEL org.opencontainers.image.source="https://github.com/long2know/mahjong-webgl" \
     org.opencontainers.image.revision="${BUILD_SHA}" \
     org.mahjong-web.engine="webgl2"
 COPY --from=backend-build /out/api/ ./

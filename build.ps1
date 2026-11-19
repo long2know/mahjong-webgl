@@ -1,7 +1,7 @@
 #requires -Version 5.1
 [CmdletBinding(PositionalBinding = $false)]
 param(
-    [Alias('Tag')][string] $ImageTag = $(if ($env:MAHJONG_IMAGE) { $env:MAHJONG_IMAGE } else { 'mahjong-web:local' }),
+    [Alias('Tag')][string] $ImageTag = $(if ($env:MAHJONG_IMAGE) { $env:MAHJONG_IMAGE } else { 'mahjong-webgl:local' }),
     [string] $Platform = $(if ($env:MAHJONG_PLATFORM) { $env:MAHJONG_PLATFORM } else { 'linux/amd64' }),
     [string] $Archive, [switch] $NoCache, [switch] $Help
 )

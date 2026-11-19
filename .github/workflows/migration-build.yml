@@ -1,4 +1,4 @@
-name: Mahjong Web source and runtime image
+name: Mahjong WebGL source and runtime image
 on:
   pull_request:
     branches: [dev, main]
@@ -93,9 +93,9 @@ jobs:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
       - name: Build exact-source image locally; no registry publication
-        run: docker build --build-arg BUILD_SHA="$(git rev-parse HEAD)" --tag mahjong-web:ci .
+        run: docker build --build-arg BUILD_SHA="$(git rev-parse HEAD)" --tag mahjong-webgl:ci .
       - name: Isolated hardened synthetic runtime and real static-artifact smoke
-        run: python3 -B tests/migration/container_smoke.py --image mahjong-web:ci --source-sha "$(git rev-parse HEAD)"
+        run: python3 -B tests/migration/container_smoke.py --image mahjong-webgl:ci --source-sha "$(git rev-parse HEAD)"
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
         with:
           node-version: "20"
@@ -113,7 +113,7 @@ jobs:
             > artifacts/runtime-input-trace/trace-contracts.log 2>&1 \
             || { cat artifacts/runtime-input-trace/trace-contracts.log; exit 1; }
       - name: Actual nginx TLS mount-prefix browser and transport proof
-        run: python3 -B tests/migration/container_proxy_smoke.py --image mahjong-web:ci --source-sha "$(git rev-parse HEAD)"
+        run: python3 -B tests/migration/container_proxy_smoke.py --image mahjong-webgl:ci --source-sha "$(git rev-parse HEAD)"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         if: always()
         with:

@@ -1,6 +1,6 @@
 # Squad Team
 
-> mahjong-unity
+> mahjong-webgl
 
 ## Coordinator
 
@@ -57,7 +57,7 @@
 
 ## Project Context
 
-- **Project:** mahjong-unity
+- **Project:** mahjong-webgl
 - **Created:** 2026-10-10
 - **Requested by:** Stephen Long
 - **Purpose:** Replace the autotable rendering layer with Unity rendering in a browser-hosted mahjong game, improving mobile presentation without rewriting the established game.

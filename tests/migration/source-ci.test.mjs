@@ -64,23 +64,47 @@ test('frontend inventory retains authority/input/layout/privacy callers and actu
   assert.doesNotMatch(commands, /UNITY_LICENSE|unity-webgl|verify-unity|build_unity|baseline-fetch/);
 });
 
-test('hosted Docker smoke builds a real source image without publishing or touching production', () => {
+test('hosted Docker smoke and Compose use the renamed image without replacing persistent volumes', () => {
   const job = workflow.jobs['image-runtime'];
   assert.equal(job['runs-on'], 'ubuntu-24.04');
   const commands = job.steps.map(step => step.run ?? '').join('\n');
   assert.match(commands, /docker build.*BUILD_SHA/);
   assert.match(commands, /container_smoke\.py/);
+  for (const step of job.steps.filter(step => /docker build|container_(?:proxy_)?smoke\.py/.test(step.run ?? ''))) {
+    assert.match(step.run, /(?:--tag|--image) mahjong-webgl:ci(?: |$)/);
+  }
   assert.doesNotMatch(commands, /login|push|ghcr-production|imagetools create|5086/);
   assert.deepEqual(job.permissions ?? workflow.permissions, { contents: 'read' });
+  const compose = yaml.load(fs.readFileSync('docker-compose.yml', 'utf8'));
+  assert.equal(compose.services.mahjong.image, '${MAHJONG_IMAGE:-mahjong-webgl:local}');
+  assert.equal(compose.name, undefined, 'Do not silently replace the existing operator-selected Compose project');
+  assert.deepEqual(compose.services.mahjong.volumes, ['mahjong-data:/data', 'bootstrap-cache:/app/data']);
+  assert.deepEqual(Object.keys(compose.volumes).sort(), ['bootstrap-cache', 'mahjong-data']);
+  for (const [provider, mount] of [['postgres', '/var/lib/postgresql/data'], ['sqlserver', '/var/opt/mssql']]) {
+    const overlay = yaml.load(fs.readFileSync(`docker-compose.${provider}.yml`, 'utf8'));
+    assert.equal(overlay.services.mahjong.image, undefined, 'Provider overlays must inherit the renamed app image');
+    assert.equal(overlay.name, undefined);
+    assert.deepEqual(overlay.services[provider].volumes, [`mahjong-${provider}-data:${mount}`]);
+    assert.deepEqual(Object.keys(overlay.volumes), [`mahjong-${provider}-data`]);
+  }
 });
 
 test('registry workflow identity/protected promotion and all actions remain pinned', () => {
   for (const name of ['ghcr-publish', 'ghcr-promote']) {
     const item = yaml.load(fs.readFileSync(`.github/workflows/${name}.yml`, 'utf8'));
     for (const job of Object.values(item.jobs)) {
-      assert.match(job.if, /long2know\/mahjong-web/);
-      assert.match(job.if, /refs\/heads\/main/);
-      if (name === 'ghcr-promote') assert.equal(job.environment.name, 'ghcr-production');
+      assert.equal(job.if, "github.repository == 'long2know/mahjong-webgl' && github.ref == 'refs/heads/main'");
+      if (name === 'ghcr-promote') {
+        assert.equal(job.environment.name, 'ghcr-production');
+        assert.equal(job.environment.url, 'https://github.com/long2know/mahjong-webgl/pull/${{ inputs.acceptance_pr }}');
+      } else {
+        const build = job.steps.find(step => step.uses?.startsWith('docker/build-push-action@'));
+        assert.deepEqual(build.with.tags.trim().split('\n'), [
+          'ghcr.io/long2know/mahjong-webgl:candidate-${{ github.run_id }}-${{ github.run_attempt }}',
+          'ghcr.io/long2know/mahjong-webgl:sha-${{ inputs.source_sha }}-${{ github.run_id }}-${{ github.run_attempt }}',
+        ]);
+        assert.match(build.with.labels, /^org\.opencontainers\.image\.source=https:\/\/github\.com\/long2know\/mahjong-webgl$/m);
+      }
     }
   }
   for (const job of Object.values(workflow.jobs)) for (const step of job.steps.filter(step => step.uses)) {

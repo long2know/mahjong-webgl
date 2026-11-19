@@ -46,7 +46,7 @@ esac
         result = self.run_wrapper()
         self.assertEqual(result.returncode, 0, result.stderr)
         args = self.log.read_text()
-        self.assertIn("buildx build --load --platform linux/amd64 --tag mahjong-web:local", args)
+        self.assertIn("buildx build --load --platform linux/amd64 --tag mahjong-webgl:local", args)
         self.assertIn("--build-arg BUILD_SHA=" + "a" * 40, args)
         self.assertNotIn("unity", args.lower())
         self.assertNotIn("artifacts", args)
@@ -60,11 +60,11 @@ esac
 
     def test_explicit_tag_platform_archive_and_no_cache_reach_docker(self):
         archive = self.fixture / "owned.tar"
-        result = self.run_wrapper("--tag", "mahjong-web:test", "--platform", "linux/arm64",
+        result = self.run_wrapper("--tag", "mahjong-webgl:test", "--platform", "linux/arm64",
                                   "--archive", str(archive), "--no-cache")
         self.assertEqual(result.returncode, 0, result.stderr)
         args = self.log.read_text()
-        for value in ("--tag mahjong-web:test", "--platform linux/arm64", "--no-cache", "image save --output " + str(archive)):
+        for value in ("--tag mahjong-webgl:test", "--platform linux/arm64", "--no-cache", "image save --output " + str(archive)):
             self.assertIn(value, args)
 
     def test_invalid_or_retired_options_fail_before_docker(self):

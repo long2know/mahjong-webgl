@@ -48,6 +48,9 @@ class WebSourceTests(unittest.TestCase):
         self.assertNotIn("artifacts/", docker)
         self.assertIn("USER 1000:1000", docker)
         self.assertIn("Security__CspStrict=true", docker)
+        self.assertIn('org.opencontainers.image.source="https://github.com/long2know/mahjong-webgl"', docker)
+        self.assertIn('MAHJONG_IMAGE:-mahjong-webgl:local', (ROOT / "build.sh").read_text())
+        self.assertIn("else { 'mahjong-webgl:local' }", (ROOT / "build.ps1").read_text())
         for path in ("scripts/build-unity-webgl.sh", "scripts/verify-unity-build.py", "docker-compose.unity-build.yml"):
             self.assertFalse((ROOT / path).exists())
         self.assertNotIn("SkipUnityBuild", (ROOT / "build.ps1").read_text())
@@ -62,7 +65,10 @@ class WebSourceTests(unittest.TestCase):
             result = subprocess.run(["git", "check-ignore", "--no-index", path], cwd=ROOT, capture_output=True)
             self.assertEqual(result.returncode, 0, path)
         package = json.loads((FRONTEND / "package.json").read_text())
-        self.assertEqual(package["name"], "mahjong-web")
+        self.assertEqual(package["name"], "mahjong-webgl")
+        lock = json.loads((FRONTEND / "package-lock.json").read_text())
+        self.assertEqual(lock["name"], package["name"])
+        self.assertEqual(lock["packages"][""]["name"], package["name"])
         self.assertFalse(any("unity" in name.lower() or "autotable" in name.lower() for name in package["dependencies"]))
 
 

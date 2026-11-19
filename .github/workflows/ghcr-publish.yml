@@ -17,7 +17,7 @@ concurrency:
   cancel-in-progress: false
 jobs:
   package:
-    if: github.repository == 'long2know/mahjong-web' && github.ref == 'refs/heads/main'
+    if: github.repository == 'long2know/mahjong-webgl' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     permissions:
@@ -60,10 +60,10 @@ jobs:
           push: true
           provenance: true
           tags: |
-            ghcr.io/long2know/mahjong-web:candidate-${{ github.run_id }}-${{ github.run_attempt }}
-            ghcr.io/long2know/mahjong-web:sha-${{ inputs.source_sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+            ghcr.io/long2know/mahjong-webgl:candidate-${{ github.run_id }}-${{ github.run_attempt }}
+            ghcr.io/long2know/mahjong-webgl:sha-${{ inputs.source_sha }}-${{ github.run_id }}-${{ github.run_attempt }}
           labels: |
-            org.opencontainers.image.source=https://github.com/long2know/mahjong-web
+            org.opencontainers.image.source=https://github.com/long2know/mahjong-webgl
             org.opencontainers.image.revision=${{ inputs.source_sha }}
           build-args: BUILD_SHA=${{ inputs.source_sha }}
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
@@ -85,7 +85,7 @@ jobs:
           set -euo pipefail
           [[ "$DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]
           [[ "$SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]]
-          IMAGE="ghcr.io/long2know/mahjong-web@${DIGEST}"
+          IMAGE="ghcr.io/long2know/mahjong-webgl@${DIGEST}"
           docker pull --platform linux/amd64 "$IMAGE"
           python3 -B tests/migration/container_smoke.py --image "$IMAGE" --source-sha "$SOURCE_SHA"
           python3 -B tests/migration/container_proxy_smoke.py --image "$IMAGE" --source-sha "$SOURCE_SHA"
